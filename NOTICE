@@ -1,0 +1,9 @@
+MOSS Prompt Enhancer Local
+
+Includes unmodified MOSS-Image prompt skill, Layout reference and prompt compiler
+from OpenMOSS/MOSS-Image (Apache License 2.0).
+Upstream: https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer
+
+The local adapter replaces tool/file-writing instructions with JSON output,
+executes the official compiler in-process, and uses an existing local llama-server.
+The llama.cpp executable and model weights are not redistributed in this package.

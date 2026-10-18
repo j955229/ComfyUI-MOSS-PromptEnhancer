@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+*.log
+*.gguf
+*.safetensors
+runtime/
+VERIFICATION.md
+tests/*
+!tests/test_prompt_node.py

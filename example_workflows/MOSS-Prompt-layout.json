@@ -1,0 +1,67 @@
+{
+  "last_node_id": 1,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MOSSPromptEnhancerLocal",
+      "pos": [
+        100,
+        100
+      ],
+      "size": [
+        680,
+        1050
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "draft_json",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "info",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MOSSPromptEnhancerLocal"
+      },
+      "widgets_values": [
+        "设计一张简洁的早餐海报：顶部标题‘老街早餐’，中间是一碗豆浆和两根油条，底部写‘热乎一早，元气一天’。英文描述，中文文字保留。",
+        "Qwen3.8/Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "layout",
+        "English",
+        1024,
+        1536,
+        42,
+        "fixed",
+        4096,
+        16384,
+        0.6,
+        "auto",
+        600,
+        "",
+        ""
+      ]
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

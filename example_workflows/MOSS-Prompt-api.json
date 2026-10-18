@@ -1,0 +1,21 @@
+{
+  "1": {
+    "class_type": "MOSSPromptEnhancerLocal",
+    "inputs": {
+      "request": "清晨的早点摊，招牌写着‘老街早餐’，自然纪实摄影。",
+      "model_name": "Qwen3.8/Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "output_mode": "caption",
+      "language": "English",
+      "width": 1024,
+      "height": 1024,
+      "seed": 42,
+      "max_tokens": 4096,
+      "context_size": 16384,
+      "temperature": 0.6,
+      "device": "auto",
+      "timeout_seconds": 600,
+      "previous_prompt": "",
+      "llama_server_path": ""
+    }
+  }
+}

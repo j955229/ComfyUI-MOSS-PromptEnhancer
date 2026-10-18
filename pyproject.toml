@@ -1,0 +1,15 @@
+[project]
+name = "comfyui-moss-prompt-enhancer-local"
+version = "0.1.0"
+description = "Local GGUF prompt generation using the MOSS-Image prompt skill"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/slmonker/ComfyUI-MOSS-PromptEnhancer"
+Documentation = "https://github.com/slmonker/ComfyUI-MOSS-PromptEnhancer#readme"
+
+[tool.comfy]
+DisplayName = "MOSS Prompt Enhancer Local"
+
