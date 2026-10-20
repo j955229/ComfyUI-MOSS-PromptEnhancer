@@ -33,9 +33,11 @@ def find_runtime(custom_node_roots, explicit_path=""):
 
 
 class LocalServer:
-    def __init__(self, executable, model, context_size, device, timeout, check_interrupt):
+    def __init__(self, executable, model, context_size, device, timeout, check_interrupt,
+                 mmproj=None):
         self.executable = Path(executable)
         self.model = Path(model)
+        self.mmproj = None if mmproj in (None, "") else Path(mmproj)
         self.context_size = context_size
         self.device = device
         self.timeout = timeout
@@ -72,12 +74,19 @@ class LocalServer:
 
     def __enter__(self):
         self.log = tempfile.TemporaryFile(mode="w+b")
-        args = [str(self.executable), "--model", str(self.model),
-                "--alias", "moss-local", "--host", "127.0.0.1", "--port", str(self.port),
-                "--api-key", self.key, "--ctx-size", str(self.context_size),
-                "--parallel", "1", "--n-gpu-layers", "0" if self.device == "cpu" else "auto",
-                "--fit", "off" if self.device == "cpu" else "on", "--fit-target", "1536",
-                "--jinja", "--no-webui", "--reasoning", "off"]
+        args = [str(self.executable), "--model", str(self.model)]
+        if self.mmproj is not None:
+            args.extend([
+                "--mmproj", str(self.mmproj),
+                "--image-min-tokens", "1024", "--image-max-tokens", "1024",
+            ])
+        args.extend([
+            "--alias", "moss-local", "--host", "127.0.0.1", "--port", str(self.port),
+            "--api-key", self.key, "--ctx-size", str(self.context_size),
+            "--parallel", "1", "--n-gpu-layers", "0" if self.device == "cpu" else "auto",
+            "--fit", "off" if self.device == "cpu" else "on", "--fit-target", "1536",
+            "--jinja", "--no-webui", "--reasoning", "off",
+        ])
         env = os.environ.copy()
         env["PATH"] = str(self.executable.parent) + os.pathsep + env.get("PATH", "")
         # CPU testing must not allocate CUDA memory in a busy ComfyUI session.

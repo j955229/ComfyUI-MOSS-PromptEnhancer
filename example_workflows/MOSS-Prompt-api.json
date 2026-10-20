@@ -15,7 +15,8 @@
       "device": "auto",
       "timeout_seconds": 600,
       "previous_prompt": "",
-      "llama_server_path": ""
+      "llama_server_path": "",
+      "task": "prompt_enhance"
     }
   }
 }

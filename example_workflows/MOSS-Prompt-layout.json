@@ -55,7 +55,9 @@
         "auto",
         600,
         "",
-        ""
+        "",
+        "auto",
+        "prompt_enhance"
       ]
     }
   ],

@@ -7,12 +7,15 @@ from pathlib import Path
 import folder_paths
 import comfy.model_management as mm
 
+from .media import prepare_image
 from .prompting import build_messages, output_schema, validate_response
 from .runtime import LocalServer, find_runtime
 
 LOGGER = logging.getLogger("ComfyUI.MOSSPromptEnhancer")
 INFERENCE_LOCK = threading.Lock()
 NO_MODELS = "[请将 GGUF 语言模型放入 models/LLM]"
+DEFAULT_REQUEST = "清晨的早点摊，招牌写着‘老街早餐’，自然纪实摄影。"
+TASK_OPTIONS = ("auto", "prompt_enhance", "prompt_reverse")
 
 
 def model_options():
@@ -33,20 +36,57 @@ def resolve_model(name):
     return path
 
 
+def projector_options():
+    root = Path(folder_paths.models_dir) / "LLM"
+    if not root.is_dir():
+        return []
+    return sorted(
+        path.relative_to(root).as_posix() for path in root.rglob("*.gguf")
+        if "mmproj" in path.name.lower()
+    )
+
+
+def resolve_projector(name, model):
+    """Resolve the vision projector used by image-to-prompt requests."""
+    root = (Path(folder_paths.models_dir) / "LLM").resolve()
+    if name and name != "auto":
+        path = (root / name).resolve()
+        if not path.is_relative_to(root) or name not in projector_options() or not path.is_file():
+            raise FileNotFoundError(f"请在 models/LLM 选择有效的 mmproj 视觉投影：{name}")
+        return path
+
+    candidates = sorted(
+        path for path in Path(model).parent.glob("*.gguf")
+        if "mmproj" in path.name.lower() and path.is_file()
+    )
+    if not candidates:
+        raise FileNotFoundError(
+            "图片反推需要视觉模型及配套 mmproj，但所选模型目录中没有 mmproj 文件。"
+            f"请将视觉投影（如 mmproj-F16.gguf）放到 {Path(model).parent}，"
+            "或在 mmproj_name 中手动选择兼容的投影。"
+        )
+    preferred = next(
+        (path for path in candidates if path.name.lower() == "mmproj-f16.gguf"),
+        candidates[0],
+    )
+    return preferred.resolve()
+
+
 class MOSSPromptEnhancerLocal:
     CATEGORY = "MOSS-Image/Prompt"
     FUNCTION = "generate"
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("prompt", "draft_json", "info")
     OUTPUT_NODE = True
-    DESCRIPTION = "读取 models/LLM 的本地 GGUF 模型，按 MOSS 官方 Skill 扩写提示词并校验 Layout。生成后自动卸载。"
+    DESCRIPTION = "读取本地 GGUF 模型扩写或反推 MOSS 提示词；prompt_reverse 任务配合 mmproj 将图片反推为提示词。生成后自动卸载。"
 
     @classmethod
     def INPUT_TYPES(cls):
         models = model_options() or [NO_MODELS]
         default = next((x for x in models if "UD-Q4_K_M" in x), models[0])
+        projectors = ["auto"] + projector_options()
         return {"required": {
-            "request": ("STRING", {"multiline": True, "default": "清晨的早点摊，招牌写着‘老街早餐’，自然纪实摄影。", "tooltip": "输入画面需求；需要保留的中文文字请明确写出。"}),
+            "request": ("STRING", {"multiline": True, "default": DEFAULT_REQUEST, "tooltip": "输入画面需求或修改要求。连接图片时可为空，作为可选的重点、构图或风格指引。"}),
             "model_name": (models, {"default": default}),
             "output_mode": (["caption", "layout", "auto"], {"default": "caption", "tooltip": "Caption：自然语言；Layout：带位置的排版；Auto：由模型选择。"}),
             "language": (["English", "中文"], {"default": "English", "tooltip": "描述语言。画面内的文字保留原文。"}),
@@ -61,13 +101,25 @@ class MOSSPromptEnhancerLocal:
         }, "optional": {
             "previous_prompt": ("STRING", {"multiline": True, "default": "", "tooltip": "可选：粘贴已有提示词，request 填修改要求。也可连接上游 prompt。"}),
             "llama_server_path": ("STRING", {"default": "", "tooltip": "留空自动复用 Qwen H3 节点 runtime；或填写本地 llama-server.exe 路径。"}),
+            "mmproj_name": (projectors, {"default": "auto", "tooltip": "连接图片时使用的视觉投影。auto 会优先选择所选模型同目录下的 mmproj-F16.gguf。"}),
+            "task": (list(TASK_OPTIONS), {"default": "auto", "tooltip": "prompt_reverse：提示词反推，把连接图片转为 MOSS 提示词；prompt_enhance：文字扩写/修改；auto：有图片时反推，否则扩写。"}),
+            "image": ("IMAGE", {"tooltip": "可选：连接 Load Image 等图片节点。prompt_reverse 任务会将图片反推为 MOSS 提示词；批处理时使用第一张。"}),
         }}
 
     def generate(self, request, model_name, output_mode, language, width, height,
                  seed, max_tokens, context_size, temperature, device, timeout_seconds,
-                 previous_prompt="", llama_server_path=""):
-        if not request.strip():
-            raise ValueError("请输入需要扩写的画面需求。")
+                 previous_prompt="", image=None, mmproj_name="auto", llama_server_path="",
+                 task="auto"):
+        if task not in TASK_OPTIONS:
+            raise ValueError(f"Invalid task: {task}")
+        has_image = image is not None
+        actual_task = task
+        if actual_task == "auto":
+            actual_task = "prompt_reverse" if has_image else "prompt_enhance"
+        if actual_task == "prompt_reverse" and not has_image:
+            raise ValueError("prompt_reverse（提示词反推）任务需要连接 image 图片输入。")
+        if not has_image and not request.strip():
+            raise ValueError("请输入需要扩写的画面需求，或连接一张图片进行提示词反推。")
         if width <= 0 or height <= 0:
             raise ValueError("width 和 height 必须为正数。")
         if output_mode != "caption" and (width % 16 or height % 16):
@@ -80,8 +132,17 @@ class MOSSPromptEnhancerLocal:
         if output_mode not in ("caption", "layout", "auto") or device not in ("auto", "cpu"):
             raise ValueError("Invalid output_mode or device")
         model = resolve_model(model_name)
+        image_payload = prepare_image(image) if has_image else None
+        mmproj = resolve_projector(mmproj_name, model) if has_image else None
         executable = find_runtime(folder_paths.get_folder_paths("custom_nodes"), llama_server_path)
-        messages = build_messages(request, output_mode, language, width, height, previous_prompt)
+        effective_request = request
+        if actual_task == "prompt_reverse" and effective_request.strip() == DEFAULT_REQUEST:
+            effective_request = ""
+        messages = build_messages(
+            effective_request, output_mode, language, width, height, previous_prompt,
+            image_url="" if image_payload is None else image_payload["data_url"],
+            task=actual_task,
+        )
         started = time.monotonic()
         # Only one process owned by this plugin can load a large model at a time.
         while not INFERENCE_LOCK.acquire(timeout=0.2):
@@ -93,7 +154,8 @@ class MOSSPromptEnhancerLocal:
                 mm.soft_empty_cache()
             LOGGER.info("[MOSS Prompt] Loading %s (%s)", model_name, device)
             with LocalServer(executable, model, context_size, device, timeout_seconds,
-                             mm.throw_exception_if_processing_interrupted) as server:
+                             mm.throw_exception_if_processing_interrupted,
+                             mmproj=mmproj) as server:
                 usage = {}
                 for attempt in range(2):
                     raw, current_usage = server.chat(messages, output_schema(output_mode), seed,
@@ -112,7 +174,17 @@ class MOSSPromptEnhancerLocal:
                             {"role": "user", "content": f"Repair this JSON draft. Validation error: {exc}. Preserve the requested content. Return one valid draft only."},
                         ])
             actual_mode = "caption" if "caption" in draft else "layout"
-            info = json.dumps({"mode": actual_mode, "model": model_name, "canvas": [width, height],
+            image_info = None
+            if image_payload is not None:
+                image_info = {
+                    "width": image_payload["width"], "height": image_payload["height"],
+                    "batch": image_payload["batch"], "frame_index": image_payload["frame_index"],
+                    "encoded_size": list(image_payload["encoded_size"]),
+                }
+            info = json.dumps({"task": actual_task, "mode": actual_mode, "model": model_name,
+                               "mmproj": None if mmproj is None else Path(mmproj).name,
+                               "input": "image+text" if has_image else "text",
+                               "image": image_info, "canvas": [width, height],
                                "seconds": round(time.monotonic() - started, 2), "usage": usage,
                                "repair_attempts": attempt, "model_unloaded": True}, ensure_ascii=False)
             draft_json = json.dumps(draft, ensure_ascii=False, indent=2)

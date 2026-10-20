@@ -8,12 +8,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 pkg = types.ModuleType("moss_unit")
 pkg.__path__ = [str(ROOT)]
 sys.modules["moss_unit"] = pkg
 prompting = importlib.import_module("moss_unit.prompting")
 runtime = importlib.import_module("moss_unit.runtime")
+media = importlib.import_module("moss_unit.media")
 
 
 class DraftTests(unittest.TestCase):
@@ -77,6 +80,66 @@ class DraftTests(unittest.TestCase):
         self.assertIn("NODE ADAPTER", messages[0]["content"])
         self.assertEqual(json.loads(messages[1]["content"])["previous_prompt"], "原来的画面")
 
+    def test_image_message_requests_reverse_engineering(self):
+        data_url = "data:image/jpeg;base64,AAAA"
+        messages = prompting.build_messages("保留招牌文字", "caption", "English", 1024, 1024,
+                                            "旧提示词", image_url=data_url)
+        self.assertIn("prompt reverse-engineering task", messages[0]["content"])
+        content = messages[1]["content"]
+        self.assertEqual(content[0]["type"], "text")
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertEqual(content[1]["image_url"]["url"], data_url)
+        request = json.loads(content[0]["text"])
+        self.assertEqual(request["task"], "prompt_reverse")
+        self.assertEqual(request["request"], "保留招牌文字")
+        self.assertEqual(request["previous_prompt"], "旧提示词")
+
+    def test_image_without_request_uses_default_reverse_instruction(self):
+        messages = prompting.build_messages("", "caption", "English", 1024, 1024,
+                                            image_url="data:image/jpeg;base64,AAAA")
+        request = json.loads(messages[1]["content"][0]["text"])
+        self.assertEqual(request["task"], "prompt_reverse")
+        self.assertIn("Reverse-engineer", request["request"])
+
+    def test_prompt_reverse_uses_prebuilt_task_system_prompt(self):
+        messages = prompting.build_messages("保留招牌文字", "caption", "English", 1024, 1024,
+                                            image_url="data:image/jpeg;base64,AAAA",
+                                            task="prompt_reverse")
+        self.assertTrue(messages[0]["content"].startswith(prompting.PROMPT_REVERSE_SYSTEM_PROMPT))
+        self.assertIn("SOURCE PRIORITY", messages[0]["content"])
+        self.assertIn("SYSTEMATIC DETAIL COVERAGE", messages[0]["content"])
+        self.assertIn("ART DIRECTION AND STYLE", messages[0]["content"])
+        self.assertIn("CHARACTER DETAILS", messages[0]["content"])
+        self.assertIn("DETAIL LEVEL: exhaustive", messages[0]["content"])
+        self.assertIn("MOSS-IMAGE OUTPUT RULES", messages[0]["content"])
+        request = json.loads(messages[1]["content"][0]["text"])
+        self.assertEqual(request["detail_level"], "exhaustive")
+        self.assertIn("art direction", request["detail_requirement"])
+        self.assertIn("wardrobe", request["detail_requirement"])
+
+    def test_prompt_enhance_text_mode_does_not_use_reverse_prompt(self):
+        messages = prompting.build_messages("早餐海报", "caption", "English", 1024, 1024,
+                                            task="prompt_enhance")
+        self.assertIn("NODE ADAPTER", messages[0]["content"])
+        self.assertNotIn("prompt reverse-engineering task", messages[0]["content"])
+
+
+class MediaTests(unittest.TestCase):
+    def test_prepare_image_encodes_first_frame_as_jpeg_data_url(self):
+        image = np.zeros((2, 64, 96, 3), dtype=np.float32)
+        payload = media.prepare_image(image)
+        self.assertEqual(payload["width"], 96)
+        self.assertEqual(payload["height"], 64)
+        self.assertEqual(payload["batch"], 2)
+        self.assertEqual(payload["frame_index"], 0)
+        self.assertTrue(payload["data_url"].startswith("data:image/jpeg;base64,"))
+
+    def test_prepare_image_limits_long_edge(self):
+        image = np.zeros((1, 512, 2048, 3), dtype=np.float32)
+        payload = media.prepare_image(image, max_edge=1024)
+        self.assertEqual(payload["original_size"], (2048, 512))
+        self.assertEqual(payload["encoded_size"], (1024, 256))
+
 
 class RuntimeTests(unittest.TestCase):
     def test_missing_executable(self):
@@ -113,6 +176,23 @@ class RuntimeTests(unittest.TestCase):
             process.kill.assert_called_once()
             self.assertIsNone(server.process)
 
+    def test_vision_server_passes_mmproj_and_image_token_limits(self):
+        def cancel():
+            raise InterruptedError("cancelled")
+        projector = Path("mmproj-F16.gguf")
+        server = runtime.LocalServer(Path(sys.executable), "model.gguf", 4096, "cpu", 5,
+                                     cancel, mmproj=projector)
+        with patch.object(runtime.subprocess, "Popen") as popen:
+            process = popen.return_value
+            process.poll.return_value = None
+            with self.assertRaises(InterruptedError):
+                server.__enter__()
+            arguments = popen.call_args.args[0]
+            self.assertIn("--mmproj", arguments)
+            self.assertIn(str(projector), arguments)
+            self.assertIn("--image-max-tokens", arguments)
+            process.terminate.assert_called_once()
+
 
 class DiscoveryTests(unittest.TestCase):
     def test_only_registered_models_and_no_path_escape(self):
@@ -130,11 +210,34 @@ class DiscoveryTests(unittest.TestCase):
             with patch.dict(sys.modules, {"folder_paths": folders, "comfy": comfy, "comfy.model_management": mm}):
                 nodes = importlib.import_module("moss_unit.nodes")
                 self.assertEqual(nodes.model_options(), ["nested/model.gguf"])
+                self.assertEqual(nodes.projector_options(), ["nested/mmproj-F16.gguf"])
                 self.assertEqual(nodes.resolve_model("nested/model.gguf"), (models / "nested" / "model.gguf").resolve())
+                self.assertEqual(nodes.resolve_projector("auto", models / "nested" / "model.gguf"),
+                                 (models / "nested" / "mmproj-F16.gguf").resolve())
+                self.assertEqual(nodes.resolve_projector("nested/mmproj-F16.gguf", models / "nested" / "model.gguf"),
+                                 (models / "nested" / "mmproj-F16.gguf").resolve())
                 with self.assertRaises(FileNotFoundError):
                     nodes.resolve_model("../outside.gguf")
                 with self.assertRaises(FileNotFoundError):
                     nodes.resolve_model("nested/mmproj-F16.gguf")
+                with self.assertRaises(FileNotFoundError):
+                    nodes.resolve_projector("../outside.gguf", models / "nested" / "model.gguf")
+
+    def test_missing_projector_reports_vision_requirement(self):
+        with tempfile.TemporaryDirectory() as temp:
+            models = Path(temp) / "LLM"
+            (models / "text-only").mkdir(parents=True)
+            model = models / "text-only" / "model.gguf"
+            model.write_bytes(b"test")
+            folders = types.ModuleType("folder_paths")
+            folders.models_dir = temp
+            comfy = types.ModuleType("comfy")
+            comfy.__path__ = []
+            mm = types.ModuleType("comfy.model_management")
+            with patch.dict(sys.modules, {"folder_paths": folders, "comfy": comfy, "comfy.model_management": mm}):
+                nodes = importlib.import_module("moss_unit.nodes")
+                with self.assertRaisesRegex(FileNotFoundError, "mmproj"):
+                    nodes.resolve_projector("auto", model)
 
 
 class NodeExecutionTests(unittest.TestCase):
@@ -150,6 +253,7 @@ class NodeExecutionTests(unittest.TestCase):
         self.nodes = importlib.import_module("moss_unit.nodes")
         self.patches = [patch.object(self.nodes, "folder_paths", folders), patch.object(self.nodes, "mm", mm),
                         patch.object(self.nodes, "resolve_model", return_value=Path("model.gguf")),
+                        patch.object(self.nodes, "resolve_projector", return_value=Path("mmproj-F16.gguf")),
                         patch.object(self.nodes, "find_runtime", return_value=Path("llama-server.exe"))]
         for item in self.patches:
             item.start()
@@ -197,6 +301,60 @@ class NodeExecutionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "正数"):
                 self.nodes.MOSSPromptEnhancerLocal().generate(**{**self.args, "output_mode": "caption", "width": 0})
             factory.assert_not_called()
+
+    def test_image_input_uses_vision_server_and_returns_prompt(self):
+        image = object()
+        payload = {"data_url": "data:image/jpeg;base64,AAAA", "width": 48, "height": 32,
+                   "batch": 1, "frame_index": 0, "encoded_size": (48, 32)}
+        with patch.object(self.nodes, "prepare_image", return_value=payload), \
+                patch.object(self.nodes, "LocalServer") as factory:
+            client = factory.return_value.__enter__.return_value
+            client.chat.return_value = ('{"caption":"A blue square in a white field."}', {})
+            result = self.nodes.MOSSPromptEnhancerLocal().generate(
+                **{**self.args, "request": "", "output_mode": "caption", "image": image})
+            self.assertEqual(result["result"][0], "A blue square in a white field.")
+            self.assertEqual(factory.call_args.kwargs["mmproj"], Path("mmproj-F16.gguf"))
+            messages = client.chat.call_args.args[0]
+            self.assertIn("prompt reverse-engineering task", messages[0]["content"])
+            self.assertEqual(messages[1]["content"][1]["type"], "image_url")
+            self.assertTrue(messages[1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+            info = json.loads(result["result"][2])
+            self.assertEqual(info["task"], "prompt_reverse")
+            self.assertEqual(info["input"], "image+text")
+            self.assertEqual(info["image"]["width"], 48)
+            self.assertEqual(info["image"]["height"], 32)
+
+    def test_image_ignores_example_request_left_unchanged(self):
+        image = object()
+        payload = {"data_url": "data:image/jpeg;base64,AAAA", "width": 16, "height": 16,
+                   "batch": 1, "frame_index": 0, "encoded_size": (16, 16)}
+        with patch.object(self.nodes, "prepare_image", return_value=payload), \
+                patch.object(self.nodes, "LocalServer") as factory:
+            client = factory.return_value.__enter__.return_value
+            client.chat.return_value = ('{"caption":"A photo."}', {})
+            self.nodes.MOSSPromptEnhancerLocal().generate(
+                **{**self.args, "request": self.nodes.DEFAULT_REQUEST,
+                   "output_mode": "caption", "image": image})
+            request = json.loads(client.chat.call_args.args[0][1]["content"][0]["text"])
+            self.assertIn("Reverse-engineer", request["request"])
+            self.assertNotIn("老街早餐", request["request"])
+
+    def test_prompt_reverse_requires_an_image_before_loading(self):
+        with patch.object(self.nodes, "LocalServer") as factory:
+            with self.assertRaisesRegex(ValueError, "需要连接 image"):
+                self.nodes.MOSSPromptEnhancerLocal().generate(
+                    **{**self.args, "task": "prompt_reverse", "image": None})
+            factory.assert_not_called()
+
+    def test_auto_task_selects_enhance_without_image(self):
+        with patch.object(self.nodes, "LocalServer") as factory:
+            client = factory.return_value.__enter__.return_value
+            client.chat.return_value = ('{"caption":"A poster."}', {})
+            result = self.nodes.MOSSPromptEnhancerLocal().generate(
+                **{**self.args, "output_mode": "caption", "task": "auto", "image": None})
+            info = json.loads(result["result"][2])
+            self.assertEqual(info["task"], "prompt_enhance")
+            self.assertEqual(info["input"], "text")
 
     def test_failed_inference_exits_context_and_releases_lock(self):
         with patch.object(self.nodes, "LocalServer") as factory:

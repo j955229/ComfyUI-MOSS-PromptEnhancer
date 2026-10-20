@@ -4,16 +4,19 @@
 
 在 ComfyUI 中使用本地 GGUF 大语言模型生成 MOSS-Image 提示词。本节点适配 [OpenMOSS 提示词增强 Skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer)，保留指定的中文画面文字，并使用上游编译器转换空间布局。
 
-节点负责生成提示词，不直接生成图片。将输出连接到你的出图工作流即可。
+节点负责生成提示词，不直接生成图片。它可以只接收文字，也可以连接一张图片，用本地视觉 GGUF + `mmproj` 把画面反推为可复用的 MOSS 提示词。将输出连接到你的出图工作流即可。
 
 ## 功能
 
 - **Caption**：适用于摄影、插画、人物与场景的自然语言描述。
 - **Layout**：生成带文字和物体位置的结构化布局，转换为 MOSS 坐标。
 - **Auto**：由模型选择 Caption 或 Layout。
+- **任务模式**：`auto` 有图时反推、无图时扩写；`prompt_enhance` 文字扩写/修改；`prompt_reverse` 明确执行图片反推。
+- **提示词反推任务**：`task=prompt_reverse`，连接 `IMAGE` 后按 MOSS Skill 规则把参考图反推为高细节提示词，默认强制覆盖画风、渲染方式、角色逐项特征、服装材质、场景、光线、配色和构图；`request` 可为空，也可填写额外重点。
+- **视觉投影自动发现**：图片模式下自动使用所选模型同目录的 `mmproj-F16.gguf`；也可在 `mmproj_name` 手动选择。
 - 描述语言可选英文或中文，画面中要求出现的文字保留原文。
-- 通过 `previous_prompt` 修改已有提示词。
-- 递归扫描 `ComfyUI/models/LLM` 下的 GGUF 模型，排除 `mmproj` 文件。
+- 通过 `previous_prompt` 修改已有提示词；连接图片时可用来校正旧稿。
+- 递归扫描 `ComfyUI/models/LLM` 下的 GGUF 模型；主模型列表排除 `mmproj` 文件。
 - 节点内结果预览，输出 `prompt`、`draft_json`、`info` 三路字符串。
 - JSON Schema 约束生成；草稿校验失败时自动修复一次；结束、报错或取消后释放进程。
 - 本地回环推理，不调用云端 API，不自动下载模型，无需额外安装 pip 依赖。
@@ -23,9 +26,10 @@
 - 已安装 ComfyUI，Python 3.10 或更新版本。
 - 本地 GGUF 指令模型，带聊天模板，且受所用 llama.cpp 版本支持。
 - 可用的 **llama-server** 可执行文件及配套运行库。
-- 足够容纳模型和上下文的内存、显存。
+- 图片反推还需要支持视觉的主模型和兼容的 `mmproj` 投影文件。
+- 足够容纳模型和上下文的系统内存、显存。
 
-已在 Windows 便携版 ComfyUI、Python 3.13、llama.cpp **b10436**、`Qwen3.8-27B-UD-Q4_K_M.gguf` 上测试。CPU 下的 Caption 与 Layout 已实际跑通；其他模型、运行库版本、操作系统和 GPU 性能尚未全面验证。适配器关闭模型思考模式。
+已在 Windows 便携版 ComfyUI、Python 3.13、llama.cpp **b10436**、`Qwen3.8-27B-UD-Q4_K_M.gguf` 上验证文本流程。图片消息、投影参数和图片编码已通过离线测试；实际图片推理速度与准确性取决于所选视觉模型、显存和运行库版本。适配器关闭模型思考模式。
 
 仓库**不包含模型权重或 llama.cpp 二进制文件**。
 
@@ -43,19 +47,20 @@ git clone https://github.com/slmonker/ComfyUI-MOSS-PromptEnhancer.git custom_nod
 
 ### 2. 放置模型
 
-将 GGUF 语言模型放入 `models/LLM`，允许使用子目录：
+文本模式只需要主 GGUF 模型。图片反推需要把配套的视觉投影放在主模型同一目录；`auto` 会优先选择该目录下的 `mmproj-F16.gguf`：
 
 ```text
 ComfyUI/
   models/
     LLM/
-      MyModel/
-        model.gguf
+      Qwen3.8/
+        Qwen3.8-27B-UD-Q4_K_M.gguf
+        mmproj-F16.gguf
   custom_nodes/
     ComfyUI-MOSS-PromptEnhancer/
 ```
 
-节点目前只接受文本输入，不需要 `mmproj-F16.gguf` 等视觉投影文件，此类文件不会出现在模型列表中。模型必须位于 `models/LLM` 内，越出该目录的路径会被拒绝。
+主模型可以放在 `models/LLM` 的子目录中。`mmproj` 会出现在独立的 `mmproj_name` 下拉框里，不会混入主模型列表。所有模型路径必须位于 `models/LLM` 内，越出该目录的路径会被拒绝。
 
 ### 3. 配置 llama-server
 
@@ -68,15 +73,17 @@ ComfyUI/
 
 ### 4. 重启 ComfyUI
 
-刷新浏览器，在 **MOSS-Image / Prompt** 分类搜索 **MOSS Prompt Enhancer · 本地提示词**。
+刷新浏览器，在 **MOSS-Image / Prompt** 分类搜索 **MOSS Prompt Enhancer · 本地提示词**。Python 代码更新后需要重启 ComfyUI 服务，而不只是刷新浏览器。
 
 ## 快速使用
 
-1. 添加节点，或加载 [示例工作流](example_workflows/)。
-2. 选择你已安装的模型。示例中的模型名称可能需要更换。
+### 文字生成
+
+1. 添加节点，或加载 [Caption 工作流](example_workflows/MOSS-Prompt-caption.json)。
+2. 选择已安装的主模型。
 3. 在 `request` 填写画面需求，选择 `caption` 和描述语言。
 4. 运行工作流。该节点可独立执行，无需连接下游出图节点。
-5. 将 `prompt` 输出连接文本编码节点的文本输入；必要时先将文本控件转换为输入端口。
+5. 将 `prompt` 输出连接文本编码节点的文本输入。
 
 示例输入：
 
@@ -84,14 +91,23 @@ ComfyUI/
 清晨的早点摊，招牌清楚写着“老街早餐”。自然纪实摄影，英文描述，中文招牌原样保留。
 ```
 
-要修改已有结果，将原稿粘贴或连接到 `previous_prompt`，在 `request` 写本次修改要求。
+### 图片反推
+
+1. 添加 **Load Image**，把它的 `IMAGE` 输出连接到本节点的 `image` 输入；也可直接加载 [图片反推工作流](example_workflows/MOSS-Prompt-image-reverse.json)。
+2. 把 `task` 设为 `prompt_reverse`。如果保持 `auto`，连接图片时也会自动选择该任务。
+3. 选择支持视觉的主模型，保持 `mmproj_name=auto`，或手动选择兼容的 `mmproj`。
+4. `request` 可留空。填写内容时可写“重点描述服装材质”“保持画面中的招牌文字”“转成中文摄影提示词”等附加要求。
+5. 选择 `caption` 或 `auto` 运行。需要文字/物体定位时用 `layout`，并确保 `width`、`height` 是 16 的倍数。
+6. 节点会使用预制的反推 system prompt 分析图片，并输出可直接用于 MOSS-Image 的提示词。
+
+图片输入按批次处理时使用第一张。图片只在内存中缩放并编码为 JPEG data URL，最长边默认 1536 像素，不会写入磁盘，也不会修改原始文件。
 
 ## 参数说明
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| `request` | 示例场景 | 画面需求、构图、文字或修改要求。 |
-| `model_name` | 自动发现的 GGUF | 相对于 `models/LLM` 的模型路径。 |
+| `request` | 示例场景 | 画面需求、构图、文字或修改要求。连接图片时可为空，作为可选重点指引。 |
+| `model_name` | 自动发现的 GGUF | 相对于 `models/LLM` 的主模型路径。 |
 | `output_mode` | `caption` | `caption`、`layout` 或 `auto`。 |
 | `language` | `English` | 描述语言；指定的画面文字保留原文。 |
 | `width`、`height` | `1024`、`1024` | Caption 的构图参考；Layout 的实际画布尺寸。 |
@@ -101,8 +117,11 @@ ComfyUI/
 | `temperature` | `0.6` | 采样温度。 |
 | `device` | `auto` | llama.cpp 自动分配 GPU，或选择 `cpu`。 |
 | `timeout_seconds` | `600` | 模型启动及每次生成请求各自的超时。 |
-| `previous_prompt` | 空 | 可选的已有提示词。 |
+| `task` | `auto` | `prompt_reverse` 提示词反推；`prompt_enhance` 文字扩写；`auto` 有图反推、无图扩写。 |
+| `image` | 未连接 | 可选 `IMAGE` 输入，用于图片反推。 |
+| `previous_prompt` | 空 | 可选的已有提示词；连接图片时用于校正旧稿。 |
 | `llama_server_path` | 空 | 可选的运行程序路径，留空使用同级运行库发现。 |
+| `mmproj_name` | `auto` | 图片模式使用的视觉投影。`auto` 优先选择主模型同目录的 `mmproj-F16.gguf`。 |
 
 **尺寸规则：** Caption 接受非 16 倍数的正尺寸，不会自动取整。Layout 和 Auto 要求宽高是正的 16 倍数，并与出图画布一致。上游分辨率节点若设为 `multiple=8`，使用 Layout/Auto 时需改为 `16`。
 
@@ -112,37 +131,43 @@ ComfyUI/
 | --- | --- |
 | `prompt` | Caption 为自然语言，Layout 为单行编译 JSON；将它传给图像模型。 |
 | `draft_json` | 可编辑草稿；Layout 使用绝对像素 `xyxy` 坐标。 |
-| `info` | 实际模式、模型、尺寸、耗时、token 用量和修复次数。 |
+| `info` | 实际模式、输入类型、模型、mmproj、图片尺寸、耗时、token 用量和修复次数。 |
 
 Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不包含画布元数据；原始草稿仍单独保留。
 
 ## 怎样写得更详细
 
-系统提示词在 [`prompting.py`](prompting.py) 中由内置 Skill、按需加入的 Layout 规范和节点适配规则组合。目前没有自定义 system prompt 输入框。
+普通扩写任务的系统提示词在 [`prompting.py`](prompting.py) 中由内置 Skill、按需加入的 Layout 规范和节点适配规则组合。
 
-在 `request` 中明确要求细化人物外貌、衣物材质、动作、手部、表情、前中后景关系、机位、光线、配色和准确文字。修改时通过 `previous_prompt` 保留原设定。提高 `max_tokens` 只增加输出余量，不会强迫模型写长；避免重复质量标签和相互矛盾的要求。
+提示词反推任务使用独立的预制常量 `PROMPT_REVERSE_SYSTEM_PROMPT`，默认细节级别为 `exhaustive`。其中写死了 MOSS Skill 的关键规则和系统性观察清单：画风与媒介、渲染/笔触/线稿/材质、每个角色的面部五官、发型、体型、表情、姿态和手势、服装层次与面料、道具、场景空间关系、镜头构图、光线色彩氛围、画面文字，以及 Caption/Layout 输出约束。模型只描述可见证据，不虚构身份或事实，不猜测不可辨文字，并禁止输出“参考图”等元语言。
+
+复杂多角色图建议把 `max_tokens` 提高到 `6144` 或 `8192`，给细节描述留出足够输出空间。
+
+文字模式下，在 `request` 中明确要求细化人物外貌、衣物材质、动作、手部、表情、前中后景关系、机位、光线、配色和准确文字。图片模式下，可把 `request` 当作重点清单，而不是重新描述整张图。修改已有结果时通过 `previous_prompt` 保留原设定。
 
 ## 内存管理与取消
 
 `device=auto` 时，节点在加载 LLM 前通过 ComfyUI 卸载缓存的图像模型。它启动绑定 `127.0.0.1`、带临时访问密钥的本地服务器，并在完成、错误或取消后结束自己启动的进程，不跨执行保留模型。
 
-CPU 模式不清理 ComfyUI 模型缓存，大模型可能较慢。节点不管理其他插件启动的服务器。增加上下文会增加资源需求。
+图片反推同时加载主模型和 `mmproj`，显存占用高于纯文本模式。CPU 模式不清理 ComfyUI 模型缓存，大模型可能较慢。节点不管理其他插件启动的服务器。
 
 ## 常见问题
 
 - **没有模型：** 将支持的 `.gguf` 放到 `models/LLM`，刷新节点定义或重启 ComfyUI。
+- **图片反推提示缺少 mmproj：** 把配套 `mmproj-F16.gguf` 放到主模型同目录，或在 `mmproj_name` 手动选择兼容投影。
+- **图片模式加载失败：** 确认主模型本身支持视觉，且 `mmproj` 与模型、llama.cpp 版本兼容。
 - **找不到 llama-server：** 手填路径，或先安装同级 Qwen H3 节点的运行库。
 - **输出截断：** 提高 `max_tokens`，必要时提高 `context_size`，为输入和输出留出余量。
 - **Layout 校验失败：** 节点会尝试修复一次；持续失败时简化布局或更换更合适的模型。
-- **加载失败或超时：** 检查 GGUF 兼容性、可用内存、运行库与超时设置。
 - **尺寸报错：** Caption 不要求 16 对齐；Layout/Auto 要求，检查上游分辨率选择器。
 
-格式校验只检查结构和坐标，不保证事实准确、图像中的文字完全正确或布局美观。当前为纯文本输入，不生成图片、不分析参考图、不发布内容。
+格式校验只检查结构和坐标，不保证事实准确、图片文字识别完全正确或布局美观。节点不生成图片、不发布内容。
 
 ## 示例与测试
 
 - [Caption 工作流](example_workflows/MOSS-Prompt-caption.json)
 - [Layout 工作流](example_workflows/MOSS-Prompt-layout.json)
+- [图片反推工作流](example_workflows/MOSS-Prompt-image-reverse.json)
 - [API 格式输入](example_workflows/MOSS-Prompt-api.json)
 - [已生成的 Layout 示例](example_workflows/generated-layout-example.txt)
 
@@ -152,7 +177,7 @@ CPU 模式不清理 ComfyUI 模型缓存，大模型可能较慢。节点不管�
 python -m unittest discover -s tests -v
 ```
 
-20 项测试覆盖中文保留、坐标转换、无效草稿、模型路径、取消清理、自动修复和 Caption 尺寸处理。推理部分使用模拟对象，不需要模型权重。
+32 项测试覆盖中文保留、坐标转换、无效草稿、模型与 mmproj 路径、图片消息构造、视觉服务参数、取消清理、自动修复和 Caption 尺寸处理。推理部分使用模拟对象，不需要模型权重。
 
 ## 来源与许可
 
