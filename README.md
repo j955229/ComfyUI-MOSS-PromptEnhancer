@@ -219,6 +219,7 @@ Schema validation checks structure and coordinates. It does not guarantee factua
 
 - [Caption workflow](example_workflows/MOSS-Prompt-caption.json)
 - [Layout workflow](example_workflows/MOSS-Prompt-layout.json)
+- [MOSS T2I + prompt-enhance workflow](example_workflows/MossT2i-prompt-enhance.json)
 - [Image-reverse workflow](example_workflows/MOSS-Prompt-image-reverse.json)
 - [API-format prompt](example_workflows/MOSS-Prompt-api.json)
 - [Third-party API backend workflow](example_workflows/MOSS-Prompt-external-api.json)

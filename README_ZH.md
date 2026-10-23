@@ -219,6 +219,7 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 
 - [Caption 工作流](example_workflows/MOSS-Prompt-caption.json)
 - [Layout 工作流](example_workflows/MOSS-Prompt-layout.json)
+- [MOSS T2I + 提示词扩写工作流](example_workflows/MossT2i-prompt-enhance.json)
 - [图片反推工作流](example_workflows/MOSS-Prompt-image-reverse.json)
 - [API 格式输入](example_workflows/MOSS-Prompt-api.json)
 - [第三方 API 后端工作流](example_workflows/MOSS-Prompt-external-api.json)
