@@ -1,10 +1,13 @@
 import importlib
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import types
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +20,7 @@ sys.modules["moss_unit"] = pkg
 prompting = importlib.import_module("moss_unit.prompting")
 runtime = importlib.import_module("moss_unit.runtime")
 media = importlib.import_module("moss_unit.media")
+api_client = importlib.import_module("moss_unit.api_client")
 
 
 class DraftTests(unittest.TestCase):
@@ -194,6 +198,69 @@ class RuntimeTests(unittest.TestCase):
             process.terminate.assert_called_once()
 
 
+class APIClientTests(unittest.TestCase):
+    def test_normalizes_endpoint_and_resolves_key_from_environment(self):
+        with patch.dict(os.environ, {"MOSS_API_KEY": "env-key"}, clear=False):
+            client = api_client.OpenAICompatibleClient("https://example.com/v1/", "demo-model")
+        self.assertEqual(client.endpoint, "https://example.com/v1/chat/completions")
+        self.assertEqual(client.headers()["Authorization"], "Bearer env-key")
+
+    def test_explicit_key_wins_and_full_endpoint_is_preserved(self):
+        with patch.dict(os.environ, {"MOSS_API_KEY": "env-key"}, clear=False):
+            client = api_client.OpenAICompatibleClient(
+                "https://example.com/v1/chat/completions", "demo-model", api_key="direct-key")
+        self.assertEqual(client.endpoint, "https://example.com/v1/chat/completions")
+        self.assertEqual(client.headers()["Authorization"], "Bearer direct-key")
+
+    def test_rejects_invalid_endpoint_and_missing_model(self):
+        with self.assertRaisesRegex(ValueError, "http"):
+            api_client.OpenAICompatibleClient("file:///tmp/api", "model")
+        with self.assertRaisesRegex(ValueError, "模型名称"):
+            api_client.OpenAICompatibleClient("https://example.com/v1", " ")
+
+    def test_chat_sends_compatible_payload_and_returns_usage(self):
+        client = api_client.OpenAICompatibleClient(
+            "https://example.com/v1", "demo-model", json_mode=True,
+            max_tokens_field="max_completion_tokens", send_seed=False)
+        response = {
+            "choices": [{"finish_reason": "stop", "message": {"content": '{"caption":"ok"}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        }
+        with patch.object(client, "request", return_value=response) as request:
+            content, usage = client.chat([{"role": "user", "content": "test"}], {}, 42, 1024, 0.4)
+        self.assertEqual(content, '{"caption":"ok"}')
+        self.assertEqual(usage["total_tokens"], 12)
+        payload = request.call_args.args[0]
+        self.assertEqual(payload["model"], "demo-model")
+        self.assertEqual(payload["max_completion_tokens"], 1024)
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertNotIn("seed", payload)
+
+    def test_chat_accepts_text_content_parts(self):
+        client = api_client.OpenAICompatibleClient("http://127.0.0.1:11434/v1", "local-model")
+        response = {"choices": [{"finish_reason": "stop", "message": {"content": [
+            {"type": "text", "text": '{"caption":"'},
+            {"type": "text", "text": 'A photo."}'},
+        ]}}]}
+        with patch.object(client, "request", return_value=response):
+            content, usage = client.chat([], {}, 1, 100, 0.0)
+        self.assertEqual(content, '{"caption":"A photo."}')
+        self.assertEqual(usage, {})
+
+    def test_chat_reports_truncation_and_http_errors(self):
+        client = api_client.OpenAICompatibleClient("https://example.com/v1", "demo-model")
+        with patch.object(client, "request", return_value={"choices": [
+                {"finish_reason": "length", "message": {"content": "{"}}]}):
+            with self.assertRaisesRegex(ValueError, "max_tokens"):
+                client.chat([], {}, 1, 100, 0.0)
+
+        error = urllib.error.HTTPError(
+            client.endpoint, 401, "Unauthorized", {}, io.BytesIO(b'{"error":"bad key"}'))
+        with patch.object(client.opener, "open", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "401"):
+                client.request({"model": "demo-model"})
+
+
 class DiscoveryTests(unittest.TestCase):
     def test_only_registered_models_and_no_path_escape(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -353,6 +420,7 @@ class NodeExecutionTests(unittest.TestCase):
             result = self.nodes.MOSSPromptEnhancerLocal().generate(
                 **{**self.args, "output_mode": "caption", "task": "auto", "image": None})
             info = json.loads(result["result"][2])
+            self.assertEqual(info["backend"], "local")
             self.assertEqual(info["task"], "prompt_enhance")
             self.assertEqual(info["input"], "text")
 
@@ -365,6 +433,74 @@ class NodeExecutionTests(unittest.TestCase):
             factory.return_value.__exit__.assert_called_once()
             self.assertTrue(self.nodes.INFERENCE_LOCK.acquire(blocking=False))
             self.nodes.INFERENCE_LOCK.release()
+
+    def test_api_node_returns_prompt_and_api_info(self):
+        with patch.object(self.nodes, "OpenAICompatibleClient") as factory:
+            client = factory.return_value
+            client.endpoint = "https://example.com/v1/chat/completions"
+            client.chat.return_value = ('{"caption":"A poster."}', {"total_tokens": 123})
+            result = self.nodes.MOSSPromptEnhancerAPI().generate(
+                request="早餐海报", base_url="https://example.com/v1", model="demo-model",
+                output_mode="caption", language="English", width=1024, height=1024,
+                seed=42, max_tokens=2048, temperature=0.6, timeout_seconds=60,
+                api_key_env="MOSS_TEST_KEY", task="prompt_enhance")
+        self.assertEqual(result["result"][0], "A poster.")
+        info = json.loads(result["result"][2])
+        self.assertEqual(info["backend"], "api")
+        self.assertEqual(info["task"], "prompt_enhance")
+        self.assertEqual(info["model"], "demo-model")
+        self.assertEqual(info["usage"]["total_tokens"], 123)
+        factory.assert_called_once()
+        self.assertEqual(factory.call_args.kwargs["api_key_env"], "MOSS_TEST_KEY")
+
+    def test_api_node_repairs_invalid_draft_once(self):
+        with patch.object(self.nodes, "OpenAICompatibleClient") as factory:
+            client = factory.return_value
+            client.endpoint = "https://example.com/v1/chat/completions"
+            client.chat.side_effect = [
+                ('{"layout": {"bad": true}}', {"completion_tokens": 3}),
+                ('{"caption":"Repaired prompt."}', {"completion_tokens": 4}),
+            ]
+            result = self.nodes.MOSSPromptEnhancerAPI().generate(
+                request="早餐海报", base_url="https://example.com/v1", model="demo-model",
+                output_mode="caption", language="English", width=1024, height=1024,
+                seed=42, max_tokens=2048, temperature=0.6, timeout_seconds=60,
+                task="prompt_enhance")
+        self.assertEqual(client.chat.call_count, 2)
+        self.assertEqual(result["result"][0], "Repaired prompt.")
+        info = json.loads(result["result"][2])
+        self.assertEqual(info["repair_attempts"], 1)
+        self.assertEqual(info["usage"]["completion_tokens"], 7)
+
+    def test_api_node_image_reverse_uses_vision_message(self):
+        image = object()
+        payload = {"data_url": "data:image/jpeg;base64,AAAA", "width": 48, "height": 32,
+                   "batch": 1, "frame_index": 0, "encoded_size": (48, 32)}
+        with patch.object(self.nodes, "prepare_image", return_value=payload), \
+                patch.object(self.nodes, "OpenAICompatibleClient") as factory:
+            client = factory.return_value
+            client.endpoint = "https://example.com/v1/chat/completions"
+            client.chat.return_value = ('{"caption":"A blue square."}', {})
+            result = self.nodes.MOSSPromptEnhancerAPI().generate(
+                request="", base_url="https://example.com/v1", model="vision-model",
+                output_mode="caption", language="English", width=1024, height=1024,
+                seed=42, max_tokens=2048, temperature=0.6, timeout_seconds=60,
+                task="prompt_reverse", image=image)
+        messages = client.chat.call_args.args[0]
+        self.assertEqual(messages[1]["content"][1]["type"], "image_url")
+        info = json.loads(result["result"][2])
+        self.assertEqual(info["input"], "image+text")
+        self.assertEqual(info["image"]["width"], 48)
+
+    def test_api_node_rejects_blank_model_before_request(self):
+        with patch.object(self.nodes, "OpenAICompatibleClient") as factory:
+            with self.assertRaisesRegex(ValueError, "模型名称"):
+                self.nodes.MOSSPromptEnhancerAPI().generate(
+                    request="prompt", base_url="https://example.com/v1", model=" ",
+                    output_mode="caption", language="English", width=1024, height=1024,
+                    seed=42, max_tokens=2048, temperature=0.6, timeout_seconds=60,
+                    task="prompt_enhance")
+            factory.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

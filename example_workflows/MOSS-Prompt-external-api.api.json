@@ -1,0 +1,25 @@
+{
+  "1": {
+    "class_type": "MOSSPromptEnhancerAPI",
+    "inputs": {
+      "request": "清晨的早点摊，招牌清楚写着‘老街早餐’。自然纪实摄影，英文描述，中文招牌原样保留。",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-4.1-mini",
+      "output_mode": "caption",
+      "language": "English",
+      "width": 1024,
+      "height": 1024,
+      "seed": 42,
+      "max_tokens": 4096,
+      "temperature": 0.6,
+      "timeout_seconds": 600,
+      "api_key": "",
+      "api_key_env": "MOSS_API_KEY",
+      "previous_prompt": "",
+      "json_mode": true,
+      "max_tokens_field": "max_tokens",
+      "send_seed": true,
+      "task": "prompt_enhance"
+    }
+  }
+}

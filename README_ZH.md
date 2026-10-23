@@ -2,9 +2,9 @@
 
 [English](README.md) | **简体中文**
 
-在 ComfyUI 中使用本地 GGUF 大语言模型生成 MOSS-Image 提示词。本节点适配 [OpenMOSS 提示词增强 Skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer)，保留指定的中文画面文字，并使用上游编译器转换空间布局。
+在 ComfyUI 中使用本地 GGUF 大语言模型或 OpenAI-compatible Chat Completions API 生成 MOSS-Image 提示词。两套节点共用 [OpenMOSS 提示词增强 Skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer)、中文文字保留规则和上游布局编译器。
 
-节点负责生成提示词，不直接生成图片。它可以只接收文字，也可以连接一张图片，用本地视觉 GGUF + `mmproj` 把画面反推为可复用的 MOSS 提示词。将输出连接到你的出图工作流即可。
+节点负责生成提示词，不直接生成图片。它可以只接收文字，也可以连接一张图片反推为可复用的 MOSS 提示词：本地节点使用视觉 GGUF + `mmproj`，API 节点使用支持视觉的云端或本地 API 模型。将输出连接到你的出图工作流即可。
 
 ## 功能
 
@@ -18,16 +18,16 @@
 - 通过 `previous_prompt` 修改已有提示词；连接图片时可用来校正旧稿。
 - 递归扫描 `ComfyUI/models/LLM` 下的 GGUF 模型；主模型列表排除 `mmproj` 文件。
 - 节点内结果预览，输出 `prompt`、`draft_json`、`info` 三路字符串。
-- JSON Schema 约束生成；草稿校验失败时自动修复一次；结束、报错或取消后释放进程。
-- 本地回环推理，不调用云端 API，不自动下载模型，无需额外安装 pip 依赖。
+- 按 JSON Schema 引导生成并在校验失败时自动修复一次；本地节点在结束、报错或取消后释放进程。
+- **两种后端：** 完全本地的 llama.cpp 节点，以及独立的 OpenAI-compatible API 节点；二者共用 MOSS Skill、JSON 校验和一次自动修复流程。
+- 本地推理只走回环地址，不自动下载模型，无需额外 pip 依赖；API 节点也只使用 Python 标准库。
 
 ## 环境要求
 
 - 已安装 ComfyUI，Python 3.10 或更新版本。
-- 本地 GGUF 指令模型，带聊天模板，且受所用 llama.cpp 版本支持。
-- 可用的 **llama-server** 可执行文件及配套运行库。
-- 图片反推还需要支持视觉的主模型和兼容的 `mmproj` 投影文件。
-- 足够容纳模型和上下文的系统内存、显存。
+- **本地节点：** GGUF 指令模型、可用的 **llama-server** 及配套运行库，并准备足够的系统内存/显存。
+- **本地图片模式：** 支持视觉的主模型和兼容的 `mmproj` 投影文件。
+- **API 节点：** 一个 OpenAI-compatible 接口和模型 ID，不需要 GGUF 或 llama-server；图片模式要求模型支持视觉输入。
 
 已在 Windows 便携版 ComfyUI、Python 3.13、llama.cpp **b10436**、`Qwen3.8-27B-UD-Q4_K_M.gguf` 上验证文本流程。图片消息、投影参数和图片编码已通过离线测试；实际图片推理速度与准确性取决于所选视觉模型、显存和运行库版本。适配器关闭模型思考模式。
 
@@ -69,11 +69,11 @@ ComfyUI/
 - 如果同级的 `ComfyUI_Qwen_H3_Prompt` 节点已经安装运行库，且具有有效的 `runtime_config.json`，将 `llama_server_path` 留空即可复用可执行文件。
 - 否则，从 [llama.cpp Releases](https://github.com/ggml-org/llama.cpp/releases) 准备适合机器的运行库，在 `llama_server_path` 填写完整路径，例如 `C:/tools/llama.cpp/llama-server.exe`。配套库文件应与可执行文件放在一起。
 
-节点会自行启动服务进程，无需提前运行服务器或填写 API 地址，也不会修改同级插件。
+本地节点会自行启动服务进程，无需提前运行服务器或填写 API 地址；API 节点则连接 `base_url`。两者都不会修改同级插件。
 
 ### 4. 重启 ComfyUI
 
-刷新浏览器，在 **MOSS-Image / Prompt** 分类搜索 **MOSS Prompt Enhancer · 本地提示词**。Python 代码更新后需要重启 ComfyUI 服务，而不只是刷新浏览器。
+刷新浏览器，在 **MOSS-Image / Prompt** 分类搜索 **MOSS Prompt Enhancer · 本地提示词** 或 **MOSS Prompt Enhancer · API**。Python 代码更新后需要重启 ComfyUI 服务，而不只是刷新浏览器。只使用 API 节点时，可跳过 GGUF 模型和 llama-server 配置。
 
 ## 快速使用
 
@@ -102,7 +102,42 @@ ComfyUI/
 
 图片输入按批次处理时使用第一张。图片只在内存中缩放并编码为 JPEG data URL，最长边默认 1536 像素，不会写入磁盘，也不会修改原始文件。
 
-## 参数说明
+## API 接入
+
+**MOSS Prompt Enhancer · API** 使用 OpenAI Chat Completions 格式请求 `POST {base_url}/chat/completions`。`base_url` 通常以 `/v1` 结尾，也可以直接填写完整的 `/chat/completions` 地址。
+
+| 服务 | `base_url` 示例 | 说明 |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | `model` 填可用的聊天模型。 |
+| OpenRouter | `https://openrouter.ai/api/v1` | 使用服务商给出的完整模型 ID。 |
+| DeepSeek | `https://api.deepseek.com` 或 `https://api.deepseek.com/v1` | 例如 `deepseek-chat`。 |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | 使用控制台中的模型 ID。 |
+| Ollama | `http://127.0.0.1:11434/v1` | 不需要 llama-server，API Key 可留空。 |
+| LM Studio | `http://127.0.0.1:1234/v1` | 先启动本地服务，API Key 可留空。 |
+
+推荐做法：在启动 ComfyUI 前设置环境变量，`api_key` 留空，并把 `api_key_env` 设为变量名。
+
+```powershell
+# Windows PowerShell
+$env:MOSS_API_KEY = "your-key"
+```
+
+```bash
+# Linux / macOS
+export MOSS_API_KEY="your-key"
+```
+
+也可以临时填写 `api_key`，但它会写入工作流 JSON，分享工作流时可能泄露。正式使用时优先用环境变量。
+
+兼容性开关：
+
+- `json_mode=true` 会发送 `response_format={"type":"json_object"}`。服务不支持时关闭，原有的 JSON 校验和自动修复仍会执行。
+- `max_tokens_field=max_tokens` 是通用设置；部分 OpenAI 推理模型需要改为 `max_completion_tokens`。
+- `send_seed=true` 会发送 `seed`。服务不接受额外参数时关闭。
+- 图片模式会把缩放后的图片作为 data URL 发送，只有支持视觉输入的模型才能使用。
+- API 报错会显示 HTTP 状态和响应正文；Key 不会写入日志或 `info`。
+
+## 本地节点参数
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
@@ -123,6 +158,8 @@ ComfyUI/
 | `llama_server_path` | 空 | 可选的运行程序路径，留空使用同级运行库发现。 |
 | `mmproj_name` | `auto` | 图片模式使用的视觉投影。`auto` 优先选择主模型同目录的 `mmproj-F16.gguf`。 |
 
+**API 节点参数：** 使用 `base_url`、`model`、`api_key`、`api_key_env`，不需要 `model_name`、`device`、`llama_server_path`、`context_size` 和 `mmproj_name`。`json_mode`、`max_tokens_field`、`send_seed` 用于兼容不同服务商；提示词、尺寸、任务、图片和旧稿参数与本地节点一致。
+
 **尺寸规则：** Caption 接受非 16 倍数的正尺寸，不会自动取整。Layout 和 Auto 要求宽高是正的 16 倍数，并与出图画布一致。上游分辨率节点若设为 `multiple=8`，使用 Layout/Auto 时需改为 `16`。
 
 ## 输出说明
@@ -131,7 +168,7 @@ ComfyUI/
 | --- | --- |
 | `prompt` | Caption 为自然语言，Layout 为单行编译 JSON；将它传给图像模型。 |
 | `draft_json` | 可编辑草稿；Layout 使用绝对像素 `xyxy` 坐标。 |
-| `info` | 实际模式、输入类型、模型、mmproj、图片尺寸、耗时、token 用量和修复次数。 |
+| `info` | 后端、实际模式、输入类型、模型、API 地址或 mmproj、图片尺寸、耗时、token 用量和修复次数。 |
 
 Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不包含画布元数据；原始草稿仍单独保留。
 
@@ -147,7 +184,7 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 
 ## 内存管理与取消
 
-`device=auto` 时，节点在加载 LLM 前通过 ComfyUI 卸载缓存的图像模型。它启动绑定 `127.0.0.1`、带临时访问密钥的本地服务器，并在完成、错误或取消后结束自己启动的进程，不跨执行保留模型。
+`device=auto` 时，本地节点在加载 LLM 前通过 ComfyUI 卸载缓存的图像模型。它启动绑定 `127.0.0.1`、带临时访问密钥的本地服务器，并在完成、错误或取消后结束自己启动的进程，不跨执行保留模型。API 节点不会加载或卸载本地 GGUF。
 
 图片反推同时加载主模型和 `mmproj`，显存占用高于纯文本模式。CPU 模式不清理 ComfyUI 模型缓存，大模型可能较慢。节点不管理其他插件启动的服务器。
 
@@ -160,6 +197,11 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 - **输出截断：** 提高 `max_tokens`，必要时提高 `context_size`，为输入和输出留出余量。
 - **Layout 校验失败：** 节点会尝试修复一次；持续失败时简化布局或更换更合适的模型。
 - **尺寸报错：** Caption 不要求 16 对齐；Layout/Auto 要求，检查上游分辨率选择器。
+- **API 返回 401/403：** 检查 `api_key_env` 指向的环境变量是否能被 ComfyUI 进程读取，或临时填写 `api_key`。
+- **API 返回 404：** 检查 `base_url`，通常需要以 `/v1` 结尾；完整 `/chat/completions` 地址也可用。
+- **API 不接受 response_format：** 将 `json_mode` 设为 false。
+- **API 不接受 max_tokens 或 seed：** 将 `max_tokens_field` 改为 `max_completion_tokens`，或关闭 `send_seed`。
+- **API 图片请求失败：** 确认所选模型支持图片输入，而不是纯文本模型。
 
 格式校验只检查结构和坐标，不保证事实准确、图片文字识别完全正确或布局美观。节点不生成图片、不发布内容。
 
@@ -169,6 +211,8 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 - [Layout 工作流](example_workflows/MOSS-Prompt-layout.json)
 - [图片反推工作流](example_workflows/MOSS-Prompt-image-reverse.json)
 - [API 格式输入](example_workflows/MOSS-Prompt-api.json)
+- [OpenAI-compatible API 工作流](example_workflows/MOSS-Prompt-external-api.json)
+- [OpenAI-compatible API 格式输入](example_workflows/MOSS-Prompt-external-api.api.json)
 - [已生成的 Layout 示例](example_workflows/generated-layout-example.txt)
 
 在仓库目录运行离线测试：
@@ -177,7 +221,7 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 python -m unittest discover -s tests -v
 ```
 
-32 项测试覆盖中文保留、坐标转换、无效草稿、模型与 mmproj 路径、图片消息构造、视觉服务参数、取消清理、自动修复和 Caption 尺寸处理。推理部分使用模拟对象，不需要模型权重。
+42 项测试覆盖中文保留、坐标转换、无效草稿、模型与 mmproj 路径、图片消息构造、视觉服务参数、取消清理、自动修复、Caption 尺寸处理、OpenAI-compatible URL 规范化、鉴权、请求体构造、分片文本解析、HTTP 错误、输出截断和 API 节点。推理部分使用模拟对象，不需要模型权重或 API Key。
 
 ## 来源与许可
 

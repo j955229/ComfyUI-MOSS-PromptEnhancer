@@ -2,9 +2,9 @@
 
 **English** | [简体中文](README_ZH.md)
 
-Generate MOSS-Image prompts inside ComfyUI using a local GGUF language model. This custom node adapts the [OpenMOSS prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer), preserves requested Chinese text, and compiles spatial layouts with the upstream compiler.
+Generate MOSS-Image prompts inside ComfyUI using either a local GGUF model or an OpenAI-compatible Chat Completions API. Both nodes adapt the [OpenMOSS prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer), preserve requested Chinese text, and compile spatial layouts with the upstream compiler.
 
-It generates prompts, not images. It can work from text alone or accept a connected image and reverse-engineer that image into a reusable MOSS prompt with a local vision GGUF and `mmproj`. Connect its output to your image-generation workflow.
+It generates prompts, not images. It can work from text alone or accept a connected image and reverse-engineer that image into a reusable MOSS prompt. The local node uses a vision GGUF and `mmproj`; the API node uses a vision-capable API model. Connect its output to your image-generation workflow.
 
 ## Features
 
@@ -18,16 +18,16 @@ It generates prompts, not images. It can work from text alone or accept a connec
 - Edit an existing prompt through `previous_prompt`; with an image, use it to correct an older draft.
 - Recursive GGUF discovery under `ComfyUI/models/LLM`, excluding `mmproj` files from the main-model list.
 - In-node output preview and three `STRING` outputs: `prompt`, `draft_json`, and `info`.
-- Schema-constrained generation, one repair attempt for invalid drafts, and process cleanup on completion, error, or cancellation.
-- Local inference over loopback only; no cloud API, automatic model download, or additional pip dependencies.
+- Schema-guided generation, validation with one repair attempt for invalid drafts, and process cleanup on completion, error, or cancellation for the local node.
+- **Two backends:** a fully local llama.cpp node and a separate OpenAI-compatible API node, sharing the same MOSS skill, schema validation, and one-pass repair flow.
+- Local inference over loopback only; no automatic model download or additional pip dependencies. The API node uses only the Python standard library.
 
 ## Requirements
 
 - An existing ComfyUI installation with Python 3.10 or newer.
-- A local GGUF instruction model with a chat template, supported by your llama.cpp build.
-- A compatible **llama-server** executable and its accompanying runtime libraries.
-- For image reverse-engineering, a vision-capable main model and a compatible `mmproj` projector.
-- Enough RAM/VRAM for the selected model and context size.
+- **Local node:** a GGUF instruction model with a chat template, a compatible **llama-server**, and enough RAM/VRAM for the selected model and context size.
+- **Local image mode:** a vision-capable main model and a compatible `mmproj` projector.
+- **API node:** an OpenAI-compatible endpoint and model ID. No GGUF weights or llama-server are required. The endpoint must support Chat Completions; image mode also requires a vision-capable model.
 
 Tested with Windows portable ComfyUI, Python 3.13, llama.cpp **b10436**, and `Qwen3.8-27B-UD-Q4_K_M.gguf` for the text flow. Image message construction, projector arguments, and image encoding are covered by offline tests; real image inference speed and accuracy depend on the selected vision model, VRAM, and runtime build. Thinking is disabled by this adapter.
 
@@ -69,11 +69,11 @@ Choose one method:
 - If the sibling `ComfyUI_Qwen_H3_Prompt` node already has a working `runtime_config.json`, leave `llama_server_path` empty to reuse its executable.
 - Otherwise, obtain a suitable runtime from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) and enter the full local executable path in `llama_server_path`. Keep the accompanying libraries next to the executable. Example: `C:/tools/llama.cpp/llama-server.exe`.
 
-The node starts its own server process; you do not need to launch a separate server or enter an API URL. It does not modify the sibling plugin.
+The local node starts its own server process; you do not need to launch a separate server or enter an API URL. The API node is separate and connects to `base_url` instead. Neither node modifies the sibling plugin.
 
 ### 4. Restart ComfyUI
 
-Search for **MOSS Prompt Enhancer · 本地提示词** under **MOSS-Image / Prompt**. A Python change requires restarting the ComfyUI service, not only refreshing the browser.
+Search under **MOSS-Image / Prompt** for **MOSS Prompt Enhancer · 本地提示词** or **MOSS Prompt Enhancer · API**. A Python change requires restarting the ComfyUI service, not only refreshing the browser. If you only use the API node, skip the GGUF model and llama-server steps.
 
 ## Quick start
 
@@ -102,7 +102,42 @@ Example request:
 
 For an image batch, the first frame is used. The image is resized and encoded in memory as a JPEG data URL with a 1536-pixel maximum edge; nothing is written to disk and the original file is not modified.
 
-## Inputs
+## API provider node
+
+**MOSS Prompt Enhancer · API** sends `POST {base_url}/chat/completions` using the OpenAI Chat Completions format. `base_url` normally ends in `/v1`; a complete URL ending in `/chat/completions` is also accepted.
+
+| Provider | Example `base_url` | Notes |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | Set `model` to an available chat model. |
+| OpenRouter | `https://openrouter.ai/api/v1` | Use the provider's full model ID. |
+| DeepSeek | `https://api.deepseek.com` or `https://api.deepseek.com/v1` | Use a chat model such as `deepseek-chat`. |
+| SiliconFlow | `https://api.siliconflow.cn/v1` | Use the model ID shown in its console. |
+| Ollama | `http://127.0.0.1:11434/v1` | No llama-server is needed; the key may stay empty. |
+| LM Studio | `http://127.0.0.1:1234/v1` | Start its local server first; the key may stay empty. |
+
+Recommended authentication: set an environment variable before launching ComfyUI, then keep `api_key` empty and set `api_key_env` to that variable name.
+
+```powershell
+# Windows PowerShell
+$env:MOSS_API_KEY = "your-key"
+```
+
+```bash
+# Linux / macOS
+export MOSS_API_KEY="your-key"
+```
+
+`api_key` is also available for quick testing, but its value is stored in the workflow JSON and may be exposed when the workflow is shared. Prefer the environment variable.
+
+Compatibility switches:
+
+- `json_mode=true` sends `response_format={"type":"json_object"}`. Turn it off if a provider rejects this field; the existing JSON validation and repair still run.
+- `max_tokens_field=max_tokens` is the common compatible setting. Newer OpenAI reasoning models may require `max_completion_tokens`.
+- `send_seed=true` sends `seed`. Turn it off for providers that reject unknown parameters.
+- Image mode sends the resized image as a data URL. Connect an image only to a model that supports vision input.
+- API errors include the HTTP status and response body. The key is never included in logs or `info`.
+
+## Local node inputs
 
 | Input | Default | Purpose |
 | --- | --- | --- |
@@ -123,6 +158,9 @@ For an image batch, the first frame is used. The image is resized and encoded in
 | `llama_server_path` | Empty | Optional executable path; otherwise use sibling runtime discovery. |
 | `mmproj_name` | `auto` | Vision projector for image mode. `auto` prefers `mmproj-F16.gguf` beside the main model. |
 
+
+**API node inputs:** use `base_url`, `model`, `api_key`, and `api_key_env` instead of `model_name`, `device`, `llama_server_path`, `context_size`, and `mmproj_name`. `json_mode`, `max_tokens_field`, and `send_seed` control OpenAI-compatible payload compatibility. All other prompt, canvas, task, image, and previous-prompt inputs are shared with the local node.
+
 **Dimension rules:** Caption accepts positive dimensions even if they are not multiples of 16; it does not round them. Layout and Auto require positive multiples of 16. Use the same dimensions in the image-generation workflow. If an upstream resolution selector uses `multiple=8`, switch it to `16` for Layout/Auto.
 
 ## Outputs
@@ -131,7 +169,7 @@ For an image batch, the first frame is used. The image is resized and encoded in
 | --- | --- |
 | `prompt` | Plain text in Caption mode, or one-line compiled Layout JSON. Send this to the image model. |
 | `draft_json` | Editable source draft. Layout boxes are absolute pixel `xyxy` coordinates. |
-| `info` | Actual output mode, input type, model, projector, image dimensions, elapsed time, token usage, and repair count. |
+| `info` | Backend, actual output mode, input type, model, endpoint or projector, image dimensions, elapsed time, token usage, and repair count. |
 
 Layout compilation converts boxes to integer `abs_centralized` / `yxyx` coordinates and removes canvas metadata from the final prompt. The original draft remains available separately.
 
@@ -147,7 +185,7 @@ In text mode, ask for concrete visible details in `request`: appearance, clothin
 
 ## Memory and cancellation
 
-With `device=auto`, the node asks ComfyUI to unload its cached image models before loading the LLM. It launches a local server on `127.0.0.1` with a temporary access key and closes that owned process after each run, including errors and cancellation. Models are not retained between executions.
+With `device=auto`, the local node asks ComfyUI to unload its cached image models before loading the LLM. It launches a local server on `127.0.0.1` with a temporary access key and closes that owned process after each run, including errors and cancellation. Models are not retained between executions. The API node does not load or unload local GGUF models.
 
 Image reverse-engineering loads both the main model and the `mmproj`, so it needs more VRAM than text-only generation. CPU mode does not clear ComfyUI's model cache and can be slow with large models. The node does not manage servers started by other plugins.
 
@@ -160,6 +198,11 @@ Image reverse-engineering loads both the main model and the `mmproj`, so it need
 - **Output truncated:** increase `max_tokens`; increase `context_size` as needed to leave room for input and output.
 - **Invalid Layout:** the node attempts one repair. Simplify the layout or use a more capable model if validation still fails.
 - **Dimension error:** Caption does not require 16-pixel alignment. Layout/Auto do; check your upstream resolution selector.
+- **API 401/403:** confirm `api_key_env` names an environment variable visible to the ComfyUI process, or fill `api_key` temporarily.
+- **API 404:** check `base_url`; it usually ends in `/v1`. A full `/chat/completions` URL is also valid.
+- **API rejects response_format:** set `json_mode` to false.
+- **API rejects max_tokens or seed:** switch `max_tokens_field` to `max_completion_tokens`, or set `send_seed` to false.
+- **API image request fails:** verify the selected API model accepts image content, not only text.
 
 Schema validation checks structure and coordinates. It does not guarantee factual accuracy, exact OCR of visible text, or attractive composition. The node does not generate images or publish content.
 
@@ -169,6 +212,8 @@ Schema validation checks structure and coordinates. It does not guarantee factua
 - [Layout workflow](example_workflows/MOSS-Prompt-layout.json)
 - [Image-reverse workflow](example_workflows/MOSS-Prompt-image-reverse.json)
 - [API-format prompt](example_workflows/MOSS-Prompt-api.json)
+- [OpenAI-compatible API workflow](example_workflows/MOSS-Prompt-external-api.json)
+- [OpenAI-compatible API-format prompt](example_workflows/MOSS-Prompt-external-api.api.json)
 - [Compiled Layout example](example_workflows/generated-layout-example.txt)
 
 Run the offline tests from the repository directory:
@@ -177,7 +222,7 @@ Run the offline tests from the repository directory:
 python -m unittest discover -s tests -v
 ```
 
-The 32 tests cover Chinese text preservation, coordinate conversion, invalid drafts, model and mmproj path containment, image message construction, vision-server arguments, interruption cleanup, repair behavior, and Caption dimension handling. They use mocks for inference and do not require model weights.
+The 42 tests cover Chinese text preservation, coordinate conversion, invalid drafts, model and mmproj path containment, image message construction, vision-server arguments, interruption cleanup, repair behavior, Caption dimension handling, OpenAI-compatible URL normalization, authentication, payload construction, content-part parsing, HTTP errors, truncation, and the API node. They use mocks for inference and do not require model weights or an API key.
 
 ## Attribution and license
 
