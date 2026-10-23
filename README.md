@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README_ZH.md)
 
-Generate MOSS-Image prompts inside ComfyUI using either a local GGUF model or an OpenAI-compatible Chat Completions API. Both nodes adapt the [OpenMOSS prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer), preserve requested Chinese text, and compile spatial layouts with the upstream compiler.
+Generate MOSS-Image prompts inside ComfyUI using either a local GGUF model or a third-party OpenAI-compatible LLM API for prompt expansion. Both nodes adapt the [OpenMOSS prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer), preserve requested Chinese text, and compile spatial layouts with the upstream compiler.
 
 It generates prompts, not images. It can work from text alone or accept a connected image and reverse-engineer that image into a reusable MOSS prompt. The local node uses a vision GGUF and `mmproj`; the API node uses a vision-capable API model. Connect its output to your image-generation workflow.
 
@@ -102,9 +102,9 @@ Example request:
 
 For an image batch, the first frame is used. The image is resized and encoded in memory as a JPEG data URL with a 1536-pixel maximum edge; nothing is written to disk and the original file is not modified.
 
-## API provider node
+## Third-party LLM API for prompt expansion
 
-**MOSS Prompt Enhancer · API** sends `POST {base_url}/chat/completions` using the OpenAI Chat Completions format. `base_url` normally ends in `/v1`; a complete URL ending in `/chat/completions` is also accepted.
+Use **MOSS Prompt Enhancer · API** when you want a third-party LLM to expand or revise the prompt instead of running a local GGUF model. For text-only prompt expansion, set `task=prompt_enhance`; no image, GGUF file, or llama-server is required. The node sends `POST {base_url}/chat/completions` using the OpenAI Chat Completions format. `base_url` normally ends in `/v1`; a complete URL ending in `/chat/completions` is also accepted.
 
 | Provider | Example `base_url` | Notes |
 | --- | --- | --- |
@@ -114,6 +114,8 @@ For an image batch, the first frame is used. The image is resized and encoded in
 | SiliconFlow | `https://api.siliconflow.cn/v1` | Use the model ID shown in its console. |
 | Ollama | `http://127.0.0.1:11434/v1` | No llama-server is needed; the key may stay empty. |
 | LM Studio | `http://127.0.0.1:1234/v1` | Start its local server first; the key may stay empty. |
+
+Example third-party text expansion: set `base_url=https://api.deepseek.com/v1`, `model=deepseek-chat`, `task=prompt_enhance`, and connect the `prompt` output to your text encoder. For SiliconFlow, set `base_url=https://api.siliconflow.cn/v1` and use the model ID shown in its console.
 
 Recommended authentication: set an environment variable before launching ComfyUI, then keep `api_key` empty and set `api_key_env` to that variable name.
 

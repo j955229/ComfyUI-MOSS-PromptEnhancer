@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-在 ComfyUI 中使用本地 GGUF 大语言模型或 OpenAI-compatible Chat Completions API 生成 MOSS-Image 提示词。两套节点共用 [OpenMOSS 提示词增强 Skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer)、中文文字保留规则和上游布局编译器。
+在 ComfyUI 中使用本地 GGUF 大语言模型，或接入第三方 OpenAI-compatible LLM API 做提示词扩写，从而生成 MOSS-Image 提示词。两套节点共用 [OpenMOSS 提示词增强 Skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer)、中文文字保留规则和上游布局编译器。
 
 节点负责生成提示词，不直接生成图片。它可以只接收文字，也可以连接一张图片反推为可复用的 MOSS 提示词：本地节点使用视觉 GGUF + `mmproj`，API 节点使用支持视觉的云端或本地 API 模型。将输出连接到你的出图工作流即可。
 
@@ -102,9 +102,9 @@ ComfyUI/
 
 图片输入按批次处理时使用第一张。图片只在内存中缩放并编码为 JPEG data URL，最长边默认 1536 像素，不会写入磁盘，也不会修改原始文件。
 
-## API 接入
+## 第三方 LLM API 提示词扩写
 
-**MOSS Prompt Enhancer · API** 使用 OpenAI Chat Completions 格式请求 `POST {base_url}/chat/completions`。`base_url` 通常以 `/v1` 结尾，也可以直接填写完整的 `/chat/completions` 地址。
+如果你希望由第三方 LLM 扩写或修改提示词，而不是运行本地 GGUF，请使用 **MOSS Prompt Enhancer · API**。纯文本扩写时把 `task` 设为 `prompt_enhance`，不需要图片、GGUF 模型或 llama-server。节点使用 OpenAI Chat Completions 格式请求 `POST {base_url}/chat/completions`；`base_url` 通常以 `/v1` 结尾，也可以直接填写完整的 `/chat/completions` 地址。
 
 | 服务 | `base_url` 示例 | 说明 |
 | --- | --- | --- |
@@ -114,6 +114,8 @@ ComfyUI/
 | 硅基流动 | `https://api.siliconflow.cn/v1` | 使用控制台中的模型 ID。 |
 | Ollama | `http://127.0.0.1:11434/v1` | 不需要 llama-server，API Key 可留空。 |
 | LM Studio | `http://127.0.0.1:1234/v1` | 先启动本地服务，API Key 可留空。 |
+
+第三方文本扩写示例：`base_url=https://api.deepseek.com/v1`、`model=deepseek-chat`、`task=prompt_enhance`，然后把 `prompt` 输出连接到文本编码节点。使用硅基流动时，把 `base_url` 改为 `https://api.siliconflow.cn/v1`，模型名填写其控制台中的模型 ID。
 
 推荐做法：在启动 ComfyUI 前设置环境变量，`api_key` 留空，并把 `api_key_env` 设为变量名。
 
