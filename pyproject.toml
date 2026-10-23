@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-moss-prompt-enhancer-local"
-version = "0.5.0"
+version = "0.6.0"
 description = "Local GGUF or OpenAI-compatible API prompt generation using the MOSS-Image prompt skill"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}

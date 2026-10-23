@@ -80,7 +80,7 @@ class OpenAICompatibleClient:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "ComfyUI-MOSS-PromptEnhancer/0.5",
+            "User-Agent": "ComfyUI-MOSS-PromptEnhancer/0.6",
         }
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key

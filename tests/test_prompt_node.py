@@ -434,16 +434,17 @@ class NodeExecutionTests(unittest.TestCase):
             self.assertTrue(self.nodes.INFERENCE_LOCK.acquire(blocking=False))
             self.nodes.INFERENCE_LOCK.release()
 
-    def test_api_node_returns_prompt_and_api_info(self):
+    def test_api_backend_returns_prompt_and_api_info(self):
         with patch.object(self.nodes, "OpenAICompatibleClient") as factory:
             client = factory.return_value
             client.endpoint = "https://example.com/v1/chat/completions"
             client.chat.return_value = ('{"caption":"A poster."}', {"total_tokens": 123})
-            result = self.nodes.MOSSPromptEnhancerAPI().generate(
-                request="早餐海报", base_url="https://example.com/v1", model="demo-model",
-                output_mode="caption", language="English", width=1024, height=1024,
-                seed=42, max_tokens=2048, temperature=0.6, timeout_seconds=60,
-                api_key_env="MOSS_TEST_KEY", task="prompt_enhance")
+            result = self.nodes.MOSSPromptEnhancerLocal().generate(**{
+                **self.args, "output_mode": "caption", "height": 1024,
+                "backend": "api", "api_base_url": "https://example.com/v1",
+                "api_model": "demo-model", "api_key_env": "MOSS_TEST_KEY",
+                "task": "prompt_enhance",
+            })
         self.assertEqual(result["result"][0], "A poster.")
         info = json.loads(result["result"][2])
         self.assertEqual(info["backend"], "api")
@@ -452,8 +453,9 @@ class NodeExecutionTests(unittest.TestCase):
         self.assertEqual(info["usage"]["total_tokens"], 123)
         factory.assert_called_once()
         self.assertEqual(factory.call_args.kwargs["api_key_env"], "MOSS_TEST_KEY")
+        self.assertEqual(factory.call_args.kwargs["base_url"], "https://example.com/v1")
 
-    def test_api_node_repairs_invalid_draft_once(self):
+    def test_api_backend_repairs_invalid_draft_once(self):
         with patch.object(self.nodes, "OpenAICompatibleClient") as factory:
             client = factory.return_value
             client.endpoint = "https://example.com/v1/chat/completions"
@@ -461,18 +463,18 @@ class NodeExecutionTests(unittest.TestCase):
                 ('{"layout": {"bad": true}}', {"completion_tokens": 3}),
                 ('{"caption":"Repaired prompt."}', {"completion_tokens": 4}),
             ]
-            result = self.nodes.MOSSPromptEnhancerAPI().generate(
-                request="早餐海报", base_url="https://example.com/v1", model="demo-model",
-                output_mode="caption", language="English", width=1024, height=1024,
-                seed=42, max_tokens=2048, temperature=0.6, timeout_seconds=60,
-                task="prompt_enhance")
+            result = self.nodes.MOSSPromptEnhancerLocal().generate(**{
+                **self.args, "output_mode": "caption", "height": 1024,
+                "backend": "api", "api_base_url": "https://example.com/v1",
+                "api_model": "demo-model", "task": "prompt_enhance",
+            })
         self.assertEqual(client.chat.call_count, 2)
         self.assertEqual(result["result"][0], "Repaired prompt.")
         info = json.loads(result["result"][2])
         self.assertEqual(info["repair_attempts"], 1)
         self.assertEqual(info["usage"]["completion_tokens"], 7)
 
-    def test_api_node_image_reverse_uses_vision_message(self):
+    def test_api_backend_image_reverse_uses_vision_message(self):
         image = object()
         payload = {"data_url": "data:image/jpeg;base64,AAAA", "width": 48, "height": 32,
                    "batch": 1, "frame_index": 0, "encoded_size": (48, 32)}
@@ -481,25 +483,25 @@ class NodeExecutionTests(unittest.TestCase):
             client = factory.return_value
             client.endpoint = "https://example.com/v1/chat/completions"
             client.chat.return_value = ('{"caption":"A blue square."}', {})
-            result = self.nodes.MOSSPromptEnhancerAPI().generate(
-                request="", base_url="https://example.com/v1", model="vision-model",
-                output_mode="caption", language="English", width=1024, height=1024,
-                seed=42, max_tokens=2048, temperature=0.6, timeout_seconds=60,
-                task="prompt_reverse", image=image)
+            result = self.nodes.MOSSPromptEnhancerLocal().generate(**{
+                **self.args, "request": "", "output_mode": "caption", "height": 1024,
+                "backend": "api", "api_base_url": "https://example.com/v1",
+                "api_model": "vision-model", "task": "prompt_reverse", "image": image,
+            })
         messages = client.chat.call_args.args[0]
         self.assertEqual(messages[1]["content"][1]["type"], "image_url")
         info = json.loads(result["result"][2])
         self.assertEqual(info["input"], "image+text")
         self.assertEqual(info["image"]["width"], 48)
 
-    def test_api_node_rejects_blank_model_before_request(self):
+    def test_api_backend_rejects_blank_model_before_request(self):
         with patch.object(self.nodes, "OpenAICompatibleClient") as factory:
-            with self.assertRaisesRegex(ValueError, "模型名称"):
-                self.nodes.MOSSPromptEnhancerAPI().generate(
-                    request="prompt", base_url="https://example.com/v1", model=" ",
-                    output_mode="caption", language="English", width=1024, height=1024,
-                    seed=42, max_tokens=2048, temperature=0.6, timeout_seconds=60,
-                    task="prompt_enhance")
+            with self.assertRaisesRegex(ValueError, "api_model"):
+                self.nodes.MOSSPromptEnhancerLocal().generate(**{
+                    **self.args, "output_mode": "caption", "height": 1024,
+                    "backend": "api", "api_base_url": "https://example.com/v1",
+                    "api_model": " ", "task": "prompt_enhance",
+                })
             factory.assert_not_called()
 
 if __name__ == "__main__":

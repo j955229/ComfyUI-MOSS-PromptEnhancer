@@ -16,7 +16,15 @@
       "timeout_seconds": 600,
       "previous_prompt": "",
       "llama_server_path": "",
-      "task": "prompt_enhance"
+      "task": "prompt_enhance",
+      "backend": "local",
+      "api_base_url": "https://api.openai.com/v1",
+      "api_model": "",
+      "api_key": "",
+      "api_key_env": "MOSS_API_KEY",
+      "api_json_mode": true,
+      "api_max_tokens_field": "max_tokens",
+      "api_send_seed": true
     }
   }
 }

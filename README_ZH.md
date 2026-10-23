@@ -2,9 +2,9 @@
 
 [English](README.md) | **简体中文**
 
-在 ComfyUI 中使用本地 GGUF 大语言模型，或接入第三方 OpenAI-compatible LLM API 做提示词扩写，从而生成 MOSS-Image 提示词。两套节点共用 [OpenMOSS 提示词增强 Skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer)、中文文字保留规则和上游布局编译器。
+在 ComfyUI 中通过同一个节点使用本地 GGUF 大语言模型，或接入第三方 OpenAI-compatible LLM API 做提示词扩写，从而生成 MOSS-Image 提示词。节点共用 [OpenMOSS 提示词增强 Skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer)、中文文字保留规则和上游布局编译器。
 
-节点负责生成提示词，不直接生成图片。它可以只接收文字，也可以连接一张图片反推为可复用的 MOSS 提示词：本地节点使用视觉 GGUF + `mmproj`，API 节点使用支持视觉的云端或本地 API 模型。将输出连接到你的出图工作流即可。
+节点负责生成提示词，不直接生成图片。它可以只接收文字，也可以连接一张图片反推为可复用的 MOSS 提示词：`backend=local` 时使用视觉 GGUF + `mmproj`，`backend=api` 时使用支持视觉的 API 模型。将输出连接到你的出图工作流即可。
 
 ## 功能
 
@@ -18,16 +18,16 @@
 - 通过 `previous_prompt` 修改已有提示词；连接图片时可用来校正旧稿。
 - 递归扫描 `ComfyUI/models/LLM` 下的 GGUF 模型；主模型列表排除 `mmproj` 文件。
 - 节点内结果预览，输出 `prompt`、`draft_json`、`info` 三路字符串。
-- 按 JSON Schema 引导生成并在校验失败时自动修复一次；本地节点在结束、报错或取消后释放进程。
-- **两种后端：** 完全本地的 llama.cpp 节点，以及独立的 OpenAI-compatible API 节点；二者共用 MOSS Skill、JSON 校验和一次自动修复流程。
-- 本地推理只走回环地址，不自动下载模型，无需额外 pip 依赖；API 节点也只使用 Python 标准库。
+- 按 JSON Schema 引导生成并在校验失败时自动修复一次；本地后端在结束、报错或取消后释放进程。
+- **一个节点，两种后端：** `backend=local` 使用 llama.cpp；`backend=api` 调用第三方 OpenAI-compatible LLM。二者共用 MOSS Skill、JSON 校验和一次自动修复流程。
+- 本地推理只走回环地址，不自动下载模型；API 后端也只使用 Python 标准库。
 
 ## 环境要求
 
 - 已安装 ComfyUI，Python 3.10 或更新版本。
-- **本地节点：** GGUF 指令模型、可用的 **llama-server** 及配套运行库，并准备足够的系统内存/显存。
+- **本地后端：** GGUF 指令模型、可用的 **llama-server** 及配套运行库，并准备足够的系统内存/显存。
 - **本地图片模式：** 支持视觉的主模型和兼容的 `mmproj` 投影文件。
-- **API 节点：** 一个 OpenAI-compatible 接口和模型 ID，不需要 GGUF 或 llama-server；图片模式要求模型支持视觉输入。
+- **API 后端：** 一个 OpenAI-compatible 接口和模型 ID，不需要 GGUF 或 llama-server；图片模式要求模型支持视觉输入。
 
 已在 Windows 便携版 ComfyUI、Python 3.13、llama.cpp **b10436**、`Qwen3.8-27B-UD-Q4_K_M.gguf` 上验证文本流程。图片消息、投影参数和图片编码已通过离线测试；实际图片推理速度与准确性取决于所选视觉模型、显存和运行库版本。适配器关闭模型思考模式。
 
@@ -69,11 +69,11 @@ ComfyUI/
 - 如果同级的 `ComfyUI_Qwen_H3_Prompt` 节点已经安装运行库，且具有有效的 `runtime_config.json`，将 `llama_server_path` 留空即可复用可执行文件。
 - 否则，从 [llama.cpp Releases](https://github.com/ggml-org/llama.cpp/releases) 准备适合机器的运行库，在 `llama_server_path` 填写完整路径，例如 `C:/tools/llama.cpp/llama-server.exe`。配套库文件应与可执行文件放在一起。
 
-本地节点会自行启动服务进程，无需提前运行服务器或填写 API 地址；API 节点则连接 `base_url`。两者都不会修改同级插件。
+`backend=local` 时，节点会自行启动服务进程，无需提前运行服务器或填写 API 地址；`backend=api` 时会连接 `api_base_url`。节点不会修改同级插件。
 
 ### 4. 重启 ComfyUI
 
-刷新浏览器，在 **MOSS-Image / Prompt** 分类搜索 **MOSS Prompt Enhancer · 本地提示词** 或 **MOSS Prompt Enhancer · API**。Python 代码更新后需要重启 ComfyUI 服务，而不只是刷新浏览器。只使用 API 节点时，可跳过 GGUF 模型和 llama-server 配置。
+刷新浏览器，在 **MOSS-Image / Prompt** 分类搜索 **MOSS Prompt Enhancer**。Python 代码更新后需要重启 ComfyUI 服务，而不只是刷新浏览器。使用 `backend=api` 时可跳过 GGUF 模型和 llama-server 配置。
 
 ## 快速使用
 
@@ -104,18 +104,18 @@ ComfyUI/
 
 ## 第三方 LLM API 提示词扩写
 
-如果你希望由第三方 LLM 扩写或修改提示词，而不是运行本地 GGUF，请使用 **MOSS Prompt Enhancer · API**。纯文本扩写时把 `task` 设为 `prompt_enhance`，不需要图片、GGUF 模型或 llama-server。节点使用 OpenAI Chat Completions 格式请求 `POST {base_url}/chat/completions`；`base_url` 通常以 `/v1` 结尾，也可以直接填写完整的 `/chat/completions` 地址。
+如果你希望由第三方 LLM 扩写或修改提示词，而不是运行本地 GGUF，请把原节点的 `backend` 设为 `api`。纯文本扩写时把 `task` 设为 `prompt_enhance`，不需要图片、GGUF 模型或 llama-server。节点使用 OpenAI Chat Completions 格式请求 `POST {api_base_url}/chat/completions`；`api_base_url` 通常以 `/v1` 结尾，也可以直接填写完整的 `/chat/completions` 地址。
 
-| 服务 | `base_url` 示例 | 说明 |
+| 服务 | `api_base_url` 示例 | 说明 |
 | --- | --- | --- |
-| OpenAI | `https://api.openai.com/v1` | `model` 填可用的聊天模型。 |
-| OpenRouter | `https://openrouter.ai/api/v1` | 使用服务商给出的完整模型 ID。 |
-| DeepSeek | `https://api.deepseek.com` 或 `https://api.deepseek.com/v1` | 例如 `deepseek-chat`。 |
-| 硅基流动 | `https://api.siliconflow.cn/v1` | 使用控制台中的模型 ID。 |
+| OpenAI | `https://api.openai.com/v1` | `api_model` 填可用的聊天模型。 |
+| OpenRouter | `https://openrouter.ai/api/v1` | `api_model` 使用服务商给出的完整模型 ID。 |
+| DeepSeek | `https://api.deepseek.com` 或 `https://api.deepseek.com/v1` | 例如 `api_model=deepseek-chat`。 |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | `api_model` 使用控制台中的模型 ID。 |
 | Ollama | `http://127.0.0.1:11434/v1` | 不需要 llama-server，API Key 可留空。 |
 | LM Studio | `http://127.0.0.1:1234/v1` | 先启动本地服务，API Key 可留空。 |
 
-第三方文本扩写示例：`base_url=https://api.deepseek.com/v1`、`model=deepseek-chat`、`task=prompt_enhance`，然后把 `prompt` 输出连接到文本编码节点。使用硅基流动时，把 `base_url` 改为 `https://api.siliconflow.cn/v1`，模型名填写其控制台中的模型 ID。
+第三方文本扩写示例：`backend=api`、`api_base_url=https://api.deepseek.com/v1`、`api_model=deepseek-chat`、`task=prompt_enhance`，然后把 `prompt` 输出连接到文本编码节点。使用硅基流动时，把 `api_base_url` 改为 `https://api.siliconflow.cn/v1`，`api_model` 填写其控制台中的模型 ID。
 
 推荐做法：在启动 ComfyUI 前设置环境变量，`api_key` 留空，并把 `api_key_env` 设为变量名。
 
@@ -133,13 +133,13 @@ export MOSS_API_KEY="your-key"
 
 兼容性开关：
 
-- `json_mode=true` 会发送 `response_format={"type":"json_object"}`。服务不支持时关闭，原有的 JSON 校验和自动修复仍会执行。
-- `max_tokens_field=max_tokens` 是通用设置；部分 OpenAI 推理模型需要改为 `max_completion_tokens`。
-- `send_seed=true` 会发送 `seed`。服务不接受额外参数时关闭。
+- `api_json_mode=true` 会发送 `response_format={"type":"json_object"}`。服务不支持时关闭，原有的 JSON 校验和自动修复仍会执行。
+- `api_max_tokens_field=max_tokens` 是通用设置；部分 OpenAI 推理模型需要改为 `max_completion_tokens`。
+- `api_send_seed=true` 会发送 `seed`。服务不接受额外参数时关闭。
 - 图片模式会把缩放后的图片作为 data URL 发送，只有支持视觉输入的模型才能使用。
 - API 报错会显示 HTTP 状态和响应正文；Key 不会写入日志或 `info`。
 
-## 本地节点参数
+## 参数
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
@@ -159,8 +159,16 @@ export MOSS_API_KEY="your-key"
 | `previous_prompt` | 空 | 可选的已有提示词；连接图片时用于校正旧稿。 |
 | `llama_server_path` | 空 | 可选的运行程序路径，留空使用同级运行库发现。 |
 | `mmproj_name` | `auto` | 图片模式使用的视觉投影。`auto` 优先选择主模型同目录的 `mmproj-F16.gguf`。 |
+| `backend` | `local` | `local` 使用 GGUF/llama.cpp；`api` 使用第三方 OpenAI-compatible LLM。 |
+| `api_base_url` | `https://api.openai.com/v1` | API 后端基础地址，通常以 `/v1` 结尾。 |
+| `api_model` | 空 | API 模型 ID，例如 `deepseek-chat` 或服务商模型名。 |
+| `api_key` | 空 | 直接填写 API Key；会写入工作流 JSON，推荐改用环境变量。 |
+| `api_key_env` | `MOSS_API_KEY` | `api_key` 为空时读取的环境变量名。 |
+| `api_json_mode` | `true` | 发送 `response_format=json_object`；服务不支持时关闭。 |
+| `api_max_tokens_field` | `max_tokens` | 部分服务/模型需要改为 `max_completion_tokens`。 |
+| `api_send_seed` | `true` | 是否发送 `seed`；服务不接受时关闭。 |
 
-**API 节点参数：** 使用 `base_url`、`model`、`api_key`、`api_key_env`，不需要 `model_name`、`device`、`llama_server_path`、`context_size` 和 `mmproj_name`。`json_mode`、`max_tokens_field`、`send_seed` 用于兼容不同服务商；提示词、尺寸、任务、图片和旧稿参数与本地节点一致。
+`backend=api` 时，`model_name`、`context_size`、`device`、`llama_server_path` 和 `mmproj_name` 会被忽略；提示词、尺寸、任务、图片和旧稿参数仍然共用。
 
 **尺寸规则：** Caption 接受非 16 倍数的正尺寸，不会自动取整。Layout 和 Auto 要求宽高是正的 16 倍数，并与出图画布一致。上游分辨率节点若设为 `multiple=8`，使用 Layout/Auto 时需改为 `16`。
 
@@ -186,7 +194,7 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 
 ## 内存管理与取消
 
-`device=auto` 时，本地节点在加载 LLM 前通过 ComfyUI 卸载缓存的图像模型。它启动绑定 `127.0.0.1`、带临时访问密钥的本地服务器，并在完成、错误或取消后结束自己启动的进程，不跨执行保留模型。API 节点不会加载或卸载本地 GGUF。
+`backend=local` 且 `device=auto` 时，节点在加载 LLM 前通过 ComfyUI 卸载缓存的图像模型。它启动绑定 `127.0.0.1`、带临时访问密钥的本地服务器，并在完成、错误或取消后结束自己启动的进程，不跨执行保留模型。`backend=api` 时不会加载或卸载本地 GGUF。
 
 图片反推同时加载主模型和 `mmproj`，显存占用高于纯文本模式。CPU 模式不清理 ComfyUI 模型缓存，大模型可能较慢。节点不管理其他插件启动的服务器。
 
@@ -200,9 +208,9 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 - **Layout 校验失败：** 节点会尝试修复一次；持续失败时简化布局或更换更合适的模型。
 - **尺寸报错：** Caption 不要求 16 对齐；Layout/Auto 要求，检查上游分辨率选择器。
 - **API 返回 401/403：** 检查 `api_key_env` 指向的环境变量是否能被 ComfyUI 进程读取，或临时填写 `api_key`。
-- **API 返回 404：** 检查 `base_url`，通常需要以 `/v1` 结尾；完整 `/chat/completions` 地址也可用。
-- **API 不接受 response_format：** 将 `json_mode` 设为 false。
-- **API 不接受 max_tokens 或 seed：** 将 `max_tokens_field` 改为 `max_completion_tokens`，或关闭 `send_seed`。
+- **API 返回 404：** 检查 `api_base_url`，通常需要以 `/v1` 结尾；完整 `/chat/completions` 地址也可用。
+- **API 不接受 response_format：** 将 `api_json_mode` 设为 false。
+- **API 不接受 max_tokens 或 seed：** 将 `api_max_tokens_field` 改为 `max_completion_tokens`，或关闭 `api_send_seed`。
 - **API 图片请求失败：** 确认所选模型支持图片输入，而不是纯文本模型。
 
 格式校验只检查结构和坐标，不保证事实准确、图片文字识别完全正确或布局美观。节点不生成图片、不发布内容。
@@ -213,8 +221,8 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 - [Layout 工作流](example_workflows/MOSS-Prompt-layout.json)
 - [图片反推工作流](example_workflows/MOSS-Prompt-image-reverse.json)
 - [API 格式输入](example_workflows/MOSS-Prompt-api.json)
-- [OpenAI-compatible API 工作流](example_workflows/MOSS-Prompt-external-api.json)
-- [OpenAI-compatible API 格式输入](example_workflows/MOSS-Prompt-external-api.api.json)
+- [第三方 API 后端工作流](example_workflows/MOSS-Prompt-external-api.json)
+- [第三方 API 后端 API 格式输入](example_workflows/MOSS-Prompt-external-api.api.json)
 - [已生成的 Layout 示例](example_workflows/generated-layout-example.txt)
 
 在仓库目录运行离线测试：
@@ -223,7 +231,7 @@ Layout 编译后坐标变为整数 `abs_centralized/yxyx`，最终提示词不�
 python -m unittest discover -s tests -v
 ```
 
-42 项测试覆盖中文保留、坐标转换、无效草稿、模型与 mmproj 路径、图片消息构造、视觉服务参数、取消清理、自动修复、Caption 尺寸处理、OpenAI-compatible URL 规范化、鉴权、请求体构造、分片文本解析、HTTP 错误、输出截断和 API 节点。推理部分使用模拟对象，不需要模型权重或 API Key。
+42 项测试覆盖中文保留、坐标转换、无效草稿、模型与 mmproj 路径、图片消息构造、视觉服务参数、取消清理、自动修复、Caption 尺寸处理、OpenAI-compatible URL 规范化、鉴权、请求体构造、分片文本解析、HTTP 错误、输出截断和 API 后端。推理部分使用模拟对象，不需要模型权重或 API Key。
 
 ## 来源与许可
 

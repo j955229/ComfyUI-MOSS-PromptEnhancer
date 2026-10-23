@@ -57,7 +57,15 @@
         "",
         "",
         "auto",
-        "prompt_enhance"
+        "prompt_enhance",
+        "local",
+        "https://api.openai.com/v1",
+        "",
+        "",
+        "MOSS_API_KEY",
+        true,
+        "max_tokens",
+        true
       ]
     }
   ],

@@ -102,7 +102,15 @@
         "",
         "",
         "auto",
-        "prompt_reverse"
+        "prompt_reverse",
+        "local",
+        "https://api.openai.com/v1",
+        "",
+        "",
+        "MOSS_API_KEY",
+        true,
+        "max_tokens",
+        true
       ]
     }
   ],

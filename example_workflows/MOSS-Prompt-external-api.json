@@ -4,14 +4,14 @@
   "nodes": [
     {
       "id": 1,
-      "type": "MOSSPromptEnhancerAPI",
+      "type": "MOSSPromptEnhancerLocal",
       "pos": [
         100,
         100
       ],
       "size": [
-        720,
-        1100
+        760,
+        1180
       ],
       "flags": {},
       "order": 0,
@@ -38,12 +38,11 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MOSSPromptEnhancerAPI"
+        "Node name for S&R": "MOSSPromptEnhancerLocal"
       },
       "widgets_values": [
         "清晨的早点摊，招牌清楚写着‘老街早餐’。自然纪实摄影，英文描述，中文招牌原样保留。",
-        "https://api.openai.com/v1",
-        "gpt-4.1-mini",
+        "Qwen3.8/Qwen3.8-27B-UD-Q4_K_M.gguf",
         "caption",
         "English",
         1024,
@@ -51,16 +50,24 @@
         42,
         "fixed",
         4096,
+        16384,
         0.6,
+        "auto",
         600,
         "",
-        "MOSS_API_KEY",
         "",
+        "auto",
+        "prompt_enhance",
+        "api",
+        "https://api.deepseek.com/v1",
+        "deepseek-chat",
+        "",
+        "MOSS_API_KEY",
         true,
         "max_tokens",
-        true,
-        "prompt_enhance"
-      ]
+        true
+      ],
+      "title": "MOSS Prompt Enhancer · 第三方 API 扩写"
     }
   ],
   "links": [],

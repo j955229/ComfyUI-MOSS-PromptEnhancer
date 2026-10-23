@@ -1,25 +1,31 @@
 {
   "1": {
-    "class_type": "MOSSPromptEnhancerAPI",
+    "class_type": "MOSSPromptEnhancerLocal",
     "inputs": {
       "request": "清晨的早点摊，招牌清楚写着‘老街早餐’。自然纪实摄影，英文描述，中文招牌原样保留。",
-      "base_url": "https://api.openai.com/v1",
-      "model": "gpt-4.1-mini",
+      "model_name": "Qwen3.8/Qwen3.8-27B-UD-Q4_K_M.gguf",
       "output_mode": "caption",
       "language": "English",
       "width": 1024,
       "height": 1024,
       "seed": 42,
       "max_tokens": 4096,
+      "context_size": 16384,
       "temperature": 0.6,
+      "device": "auto",
       "timeout_seconds": 600,
+      "previous_prompt": "",
+      "llama_server_path": "",
+      "mmproj_name": "auto",
+      "task": "prompt_enhance",
+      "backend": "api",
+      "api_base_url": "https://api.deepseek.com/v1",
+      "api_model": "deepseek-chat",
       "api_key": "",
       "api_key_env": "MOSS_API_KEY",
-      "previous_prompt": "",
-      "json_mode": true,
-      "max_tokens_field": "max_tokens",
-      "send_seed": true,
-      "task": "prompt_enhance"
+      "api_json_mode": true,
+      "api_max_tokens_field": "max_tokens",
+      "api_send_seed": true
     }
   }
 }

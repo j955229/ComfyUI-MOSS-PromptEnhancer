@@ -4,7 +4,7 @@ import { ComfyWidgets } from "../../scripts/widgets.js";
 app.registerExtension({
     name: "MOSS.PromptPreview",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (!["MOSSPromptEnhancerLocal", "MOSSPromptEnhancerAPI"].includes(nodeData.name)) return;
+        if (nodeData.name !== "MOSSPromptEnhancerLocal") return;
         const onExecuted = nodeType.prototype.onExecuted;
         nodeType.prototype.onExecuted = function (message) {
             onExecuted?.apply(this, arguments);
