@@ -76,7 +76,7 @@ FORMAT = """OUTPUT CONTRACT: You have no tools. Return only one standard JSON ob
 Caption draft: exactly {"caption":"complete prose"}. No coordinates or layout fields.
 Layout draft: exactly width, height, bbox_coord_space="abs", bbox_format="xyxy", summary, items.
 summary requires nonempty caption, meta (nonempty string array of meaningful medium/genre tags) and canvas (single, multi_panel or collage).
-summary.palette and item tags/palette are optional string arrays. meta must not contain quality/score/artist tags.
+Item tags are optional string arrays. Do not output palette fields in summary or items; editor color swatches are user-managed. Describe relevant visual colors in captions. meta must not contain quality/score/artist tags.
 items is a nonempty flat array. Each item requires label (object/character/text), nonempty caption and bbox.
 A text item additionally requires nonempty text containing the exact visible wording. Describe its typography/carrier in caption.
 Every bbox is actual full-canvas top-left pixel [x_min,y_min,x_max,y_max], with positive area inside the supplied dimensions.

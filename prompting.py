@@ -14,7 +14,7 @@ ITEM_PROPERTIES = {
     "label": {"enum": ["object", "character", "text"]},
     "caption": {"type": "string"},
     "bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
-    "text": {"type": "string"}, "tags": STRINGS, "palette": STRINGS,
+    "text": {"type": "string"}, "tags": STRINGS,
 }
 LAYOUT_SCHEMA = {
     "type": "object",
@@ -25,7 +25,7 @@ LAYOUT_SCHEMA = {
             "type": "object",
             "properties": {
                 "caption": {"type": "string"}, "meta": {**STRINGS, "minItems": 1},
-                "canvas": {"enum": ["single", "multi_panel", "collage"]}, "palette": STRINGS,
+                "canvas": {"enum": ["single", "multi_panel", "collage"]},
             },
             "required": ["caption", "meta", "canvas"], "additionalProperties": False,
         },
@@ -98,6 +98,10 @@ def validate_response(raw, mode, width, height):
         summary = draft.get("summary")
         if not isinstance(summary, dict):
             raise ValueError("Layout requires summary")
+        items = draft.get("items")
+        if "palette" in summary or (isinstance(items, list) and any(
+                isinstance(item, dict) and "palette" in item for item in items)):
+            raise ValueError("Do not generate palette fields; color swatches are edited manually in the editor.")
         if "meta" not in summary or not isinstance(summary["meta"], list) or not summary["meta"]:
             raise ValueError("summary.meta must be a nonempty string array of medium/genre tags")
         if summary.get("canvas") not in ("single", "multi_panel", "collage"):
