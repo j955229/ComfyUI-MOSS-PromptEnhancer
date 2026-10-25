@@ -80,8 +80,8 @@ def resolve_projector(name, model):
 class MOSSPromptEnhancerLocal:
     CATEGORY = "MOSS-Image/Prompt"
     FUNCTION = "generate"
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("prompt", "draft_json", "info")
+    RETURN_TYPES = ("STRING", "BOUNDING_BOX")
+    RETURN_NAMES = ("prompt", "bboxes")
     OUTPUT_NODE = True
     DESCRIPTION = "MOSS 提示词生成与 KJ 布局编辑；支持本地 GGUF、API、ComfyUI CLIP。when empty 保留编辑内容并略过推理。"
 
@@ -339,4 +339,14 @@ class MOSSPromptEnhancerLocal:
         ui = {"dims": [width, height], "moss_info": [info_text], "resolved_canvas": [payload["summary"]["canvas"]]}
         if push:
             ui["caption"] = [json.dumps(payload, ensure_ascii=False)]
-        return {"ui": ui, "result": (compiled, json.dumps(draft, ensure_ascii=False, indent=2), info_text)}
+        # Match KJ's BOUNDING_BOX payload: bboxes[frame] is a list of pixel xywh dictionaries.
+        # Use the final compiled boxes, so output geometry agrees with the prompt/editor.
+        boxes = []
+        for item in payload.get("items", []):
+            y1, x1, y2, x2 = item["bbox"]
+            boxes.append({
+                "x": round(x1 + width // 2), "y": round(y1 + height // 2),
+                "width": round(x2 - x1), "height": round(y2 - y1),
+            })
+        bboxes = [boxes] if boxes else []
+        return {"ui": ui, "result": (compiled, bboxes)}

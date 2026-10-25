@@ -113,6 +113,18 @@ app.registerExtension({
     };
     const configure = proto.onConfigure;
     proto.onConfigure = function (data) {
+      const removedOutputs = data?.outputs?.some((output) =>
+        output.name === "draft_json" || output.name === "info");
+      if (removedOutputs) {
+        // Wait until graph links have been restored, then disconnect removed STRING
+        // ports before replacing them with a BOUNDING_BOX socket at slot 1.
+        queueMicrotask(() => {
+          for (let slot = (this.outputs?.length || 0) - 1; slot >= 1; slot--) this.removeOutput(slot);
+          this.addOutput("bboxes", "BOUNDING_BOX");
+          this.setDirtyCanvas?.(true, true);
+          this.graph?.change?.();
+        });
+      }
       const values = data?.moss?.values || Object.fromEntries(
         LEGACY.map((name, i) => [name, data?.widgets_values?.[i]]).filter(([, v]) => v !== undefined));
       const restored = { ...this._mossDefaults, ...values };
