@@ -25,7 +25,7 @@ const ADVANCED = new Set(["llama_server_path", "timeout_seconds", "api_key_env",
 const SAMPLING = new Set(["temperature", "seed", "control_after_generate", "top_k", "top_p", "min_p",
   "repetition_penalty", "presence_penalty"]);
 // Keep the global caption as internal editor state, without the redundant node textarea.
-const HIDDEN = new Set(["prompt", "elements_data", "style_palette_data", "bg_brightness", "output_format"]);
+const HIDDEN = new Set(["prompt", "resolved_canvas", "elements_data", "style_palette_data", "bg_brightness", "output_format"]);
 
 function visible(widget, show) {
   if (!widget._mossOriginal) widget._mossOriginal = {
@@ -122,6 +122,16 @@ app.registerExtension({
       configure?.apply(this, arguments);
       refresh(this);
     };
+    const executed = proto.onExecuted;
+    proto.onExecuted = function (message) {
+      const result = executed?.apply(this, arguments);
+      const resolved = message?.resolved_canvas?.[0];
+      if (["single", "multi_panel", "collage"].includes(resolved)) {
+        const widget = this.widgets?.find((w) => w.name === "resolved_canvas");
+        if (widget) widget.value = resolved;
+      }
+      return result;
+    };
     const serialize = proto.onSerialize;
     proto.onSerialize = function (data) {
       serialize?.apply(this, arguments);
@@ -138,4 +148,17 @@ app.registerExtension({
       return result;
     };
   },
+});
+
+// Make actual execution failures visible even when the frontend only marks the node red.
+app.api?.addEventListener?.("execution_error", (event) => {
+  const detail = event.detail || {};
+  const node = app.graph?.getNodeById?.(detail.node_id);
+  if (detail.node_type !== "MOSSPromptEnhancerLocal" &&
+      node?.comfyClass !== "MOSSPromptEnhancerLocal" && node?.type !== "MOSSPromptEnhancerLocal") return;
+  const message = String(detail.exception_message || detail.exception_type || "Unknown execution error");
+  const toast = app.extensionManager?.toast;
+  if (typeof toast?.add === "function") {
+    toast.add({ severity: "error", summary: "MOSS Prompt Enhancer", detail: message, life: 15000 });
+  } else window.alert("MOSS Prompt Enhancer\n\n" + message);
 });

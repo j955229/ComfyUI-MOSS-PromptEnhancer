@@ -134,7 +134,7 @@ class MOSSPromptEnhancerLocal:
             "prompt": ("STRING", {"multiline": True, "default": "", "tooltip": "编辑器的全局描述；when empty 且已有内容时直接输出，不重新调用 LLM。"}),
             "meta": ("STRING", {"default": "", "tooltip": "媒介/体裁标签，逗号或换行分隔。"}),
             "canvas": (["none", "single", "multi_panel", "collage"],
-                       {"default": "none", "tooltip": "none 为未指定；生成时由 LLM 判断。"}),
+                       {"default": "none", "tooltip": "none：自动判断且保持此选择；single / multi_panel / collage：明确指定生成的画面类型。"}),
             "import_json": ("STRING", {"default": "", "forceInput": True, "lazy": True, "tooltip": "导入 MOSS 最终 JSON、像素草稿或 Caption；有输入时作为新内容来源。"}),
             "import_mode": (["when empty", "always"], {"default": "when empty",
                             "tooltip": "when empty：保留已编辑内容并略过 LLM；always：每次采用导入或新生成内容。"}),
@@ -142,6 +142,7 @@ class MOSSPromptEnhancerLocal:
             "style_palette_data": ("STRING", {"default": ""}),
             "bg_brightness": ("INT", {"default": 25, "min": 0, "max": 100}),
             "output_format": (["compact", "pretty"], {"default": "compact"}),
+            "resolved_canvas": ("STRING", {"default": "", "tooltip": "内部保存实际输出的画面类型，不覆盖 canvas 选择。"}),
             "show_advanced": ("BOOLEAN", {"default": False}),
         })
         return inputs
@@ -169,7 +170,20 @@ class MOSSPromptEnhancerLocal:
             return ["clip"]
         return []
 
-    def generate(self, request, model_name, output_mode, language, width, height,
+    def generate(self, *args, **kwargs):
+        try:
+            return self._generate_impl(*args, **kwargs)
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as exc:
+            context = (
+                f"backend={kwargs.get('backend', 'local')}, "
+                f"canvas={kwargs.get('canvas', 'none')}, "
+                f"output_mode={kwargs.get('output_mode', 'caption')}, "
+                f"import_mode={kwargs.get('import_mode', 'when empty')}"
+            )
+            LOGGER.exception("[MOSS Prompt Enhancer] %s", context)
+            raise RuntimeError(f"MOSS Prompt Enhancer 执行失败\n{context}\n原始错误：{exc}") from exc
+
+    def _generate_impl(self, request, model_name, output_mode, language, width, height,
                  seed, max_tokens, context_size, temperature, device, timeout_seconds,
                  previous_prompt="", image=None, mmproj_name="auto", llama_server_path="",
                  task="auto", backend="local", api_base_url="https://api.openai.com/v1",
@@ -179,20 +193,22 @@ class MOSSPromptEnhancerLocal:
                  top_k=64, top_p=0.95, min_p=0.05, repetition_penalty=1.05, presence_penalty=0.0,
                  thinking=False, mtp="auto", prompt="", meta="", canvas="none", import_json="",
                  import_mode="when empty", elements_data="", style_palette_data="",
-                 bg_brightness=25, output_format="compact", show_advanced=False):
+                 bg_brightness=25, output_format="compact", show_advanced=False, resolved_canvas=""):
+        if canvas not in ("none", "single", "multi_panel", "collage"):
+            raise ValueError(f"canvas={canvas!r} 无效；请选择 none、single、multi_panel 或 collage。")
         if import_mode not in ("when empty", "always"):
             raise ValueError("Invalid import_mode")
         if width <= 0 or height <= 0:
             raise ValueError("width 和 height 必须为正数。")
-        fallback = metadata(meta, canvas, data_list(style_palette_data, "style_palette_data"), content_type)
+        fallback = metadata(meta, canvas, data_list(style_palette_data, "style_palette_data"), content_type, resolved_canvas)
         if import_mode == "when empty":
             saved, fallback = editor_draft(prompt, elements_data, meta, canvas, style_palette_data,
-                                           width, height, content_type)
+                                           width, height, content_type, resolved_canvas)
             if saved is not None:
                 return self._response(saved, fallback, width, height, output_format,
                                       {"backend": backend, "source": "editor", "llm_called": False}, push=False)
         if import_json.strip():
-            imported, fallback = parse_import(import_json, width, height, fallback, content_type)
+            imported, fallback = parse_import(import_json, width, height, fallback, content_type, canvas)
             return self._response(imported, fallback, width, height, output_format,
                                   {"backend": backend, "source": "import", "llm_called": False})
         if backend not in ("local", "api", "clip"):
@@ -218,7 +234,7 @@ class MOSSPromptEnhancerLocal:
         messages = build_messages(
             effective_request, output_mode, language, width, height, previous_prompt,
             image_url=image_payload["data_url"] if image_payload else "",
-            task=actual_task, content_type=content_type, character_mode=character_mode, has_image=has_image,
+            task=actual_task, content_type=content_type, character_mode=character_mode, has_image=has_image, canvas=canvas,
         )
         # import_mode=always makes the new source authoritative, like KJ.
         # Editor metadata is retained by when-empty output or missing-field import merging.
@@ -229,14 +245,14 @@ class MOSSPromptEnhancerLocal:
             "backend": backend, "task": actual_task, "content_type": content_type,
             "character_mode": character_mode, "source": "generated", "llm_called": True,
             "input": "image+text" if has_image else "text", "canvas": [width, height],
-            "seed": seed, "sampling_mode": sampling_mode,
+            "seed": seed, "sampling_mode": sampling_mode, "canvas_selection": canvas,
         }
         if has_image:
             info["image"] = {"width": int(image.shape[2]), "height": int(image.shape[1]),
                              "batch": int(image.shape[0]), "frame_index": 0}
         run = dict(messages=messages, output_mode=output_mode, width=width, height=height,
                    seed=seed, max_tokens=max_tokens, temperature=temperature if sampling["do_sample"] else 0.0,
-                   sampling=sampling, fallback=fallback,
+                   sampling=sampling, fallback=fallback, canvas_selection=canvas,
                    output_format=output_format, info=info, started=started)
         if backend == "api":
             client = OpenAICompatibleClient(
@@ -273,18 +289,18 @@ class MOSSPromptEnhancerLocal:
             INFERENCE_LOCK.release()
 
     def _infer(self, chat, messages, output_mode, width, height, seed, max_tokens, temperature,
-               sampling, fallback, output_format, info, started):
+               sampling, fallback, canvas_selection, output_format, info, started):
         usage = {}
         for attempt in range(2):
             mm.throw_exception_if_processing_interrupted()
-            raw, current_usage = chat(messages, output_schema(output_mode), seed, max_tokens, temperature,
+            raw, current_usage = chat(messages, output_schema(output_mode, canvas_selection), seed, max_tokens, temperature,
                                       sampling=sampling)
             for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
                 value = current_usage.get(key)
                 if isinstance(value, (int, float)):
                     usage[key] = usage.get(key, 0) + value
             try:
-                draft, _ = validate_response(raw, output_mode, width, height)
+                draft, _ = validate_response(raw, output_mode, width, height, canvas_selection)
                 break
             except ValueError as exc:
                 if attempt:
@@ -304,9 +320,9 @@ class MOSSPromptEnhancerLocal:
         payload = editor_payload(draft, compiled, fallback)
         if actual_mode == "layout" and output_format == "pretty":
             compiled = json.dumps(payload, ensure_ascii=False, indent=4)
-        info = {**info, "mode": actual_mode, "canvas": [width, height]}
+        info = {**info, "mode": actual_mode, "canvas": [width, height], "canvas_type": payload["summary"]["canvas"]}
         info_text = json.dumps(info, ensure_ascii=False)
-        ui = {"dims": [width, height], "moss_info": [info_text]}
+        ui = {"dims": [width, height], "moss_info": [info_text], "resolved_canvas": [payload["summary"]["canvas"]]}
         if push:
             ui["caption"] = [json.dumps(payload, ensure_ascii=False)]
         return {"ui": ui, "result": (compiled, json.dumps(draft, ensure_ascii=False, indent=2), info_text)}

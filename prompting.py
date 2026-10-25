@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
 import re
+from copy import deepcopy
 
 from .prompt_templates import instructions
 from .vendor.compile_prompt import compile_prompt, reject_constant, unique_object
@@ -44,20 +45,36 @@ LAYOUT_SCHEMA = {
     "additionalProperties": False,
 }
 
-def output_schema(mode):
+def output_schema(mode, canvas="none"):
+    layout = deepcopy(LAYOUT_SCHEMA)
+    if canvas in ("single", "multi_panel", "collage"):
+        layout["properties"]["summary"]["properties"]["canvas"] = {"const": canvas}
     if mode == "caption":
         return CAPTION_SCHEMA
-    if mode == "layout":
-        return LAYOUT_SCHEMA
-    return {"oneOf": [CAPTION_SCHEMA, LAYOUT_SCHEMA]}
+    if mode == "layout" or (mode == "auto" and canvas in ("multi_panel", "collage")):
+        return layout
+    return {"oneOf": [CAPTION_SCHEMA, layout]}
 
 def build_messages(request, mode, language, width, height, previous_prompt="", image_url="",
-                   task="auto", content_type="auto", character_mode="auto", has_image=False):
+                   task="auto", content_type="auto", character_mode="auto", has_image=False, canvas="none"):
     has_image = has_image or bool(image_url)
     actual_task = ("prompt_reverse" if has_image else "prompt_enhance") if task == "auto" else task
     system = instructions(content_type, character_mode, actual_task)
     system += (f"\nNODE PARAMETERS: output_mode={mode}; descriptive language={language}; "
                f"canvas width={width}, height={height}. Visible copy stays in its original language.")
+    system += (
+        "\nCANVAS TYPE: single is one continuous composition; multi_panel has distinct narrative panels; "
+        "collage combines multiple visual pieces as a montage. Subject count is independent of canvas type."
+    )
+    if canvas in ("single", "multi_panel", "collage"):
+        system += (
+            f"\nThe user explicitly selected canvas={canvas}. Plan the image accordingly. "
+            f"In every Layout result summary.canvas MUST equal {canvas}; do not change it to another type."
+        )
+        if mode == "auto" and canvas in ("multi_panel", "collage"):
+            system += " Auto output must use a Layout draft for this explicit canvas type."
+    else:
+        system += "\nCanvas selection is automatic (none). Infer one valid output canvas type; never emit none."
     user = {"request": request.strip(), "task": actual_task}
     if actual_task == "prompt_reverse" and not user["request"]:
         user["request"] = "Describe all applicable visible details faithfully for a reusable image prompt."
@@ -77,7 +94,7 @@ def build_messages(request, mode, language, width, height, previous_prompt="", i
                    {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}}]
     return [{"role": "system", "content": system}, {"role": "user", "content": content}]
 
-def validate_response(raw, mode, width, height):
+def validate_response(raw, mode, width, height, canvas="none"):
     cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
     if "</think>" in cleaned:
         cleaned = cleaned.rsplit("</think>", 1)[1].strip()
@@ -90,7 +107,7 @@ def validate_response(raw, mode, width, height):
     is_caption = "caption" in draft
     if mode == "caption" and not is_caption:
         raise ValueError("Caption mode requires exactly a caption object")
-    if mode == "layout" and is_caption:
+    if (mode == "layout" or (mode == "auto" and canvas in ("multi_panel", "collage"))) and is_caption:
         raise ValueError("Layout mode requires a layout object")
     if not is_caption:
         if (draft.get("width"), draft.get("height")) != (width, height):
@@ -111,5 +128,7 @@ def validate_response(raw, mode, width, height):
             if len(normalized_meta) != len(set(normalized_meta)):
                 raise ValueError("summary.meta tags must not repeat")
         if summary.get("canvas") not in ("single", "multi_panel", "collage"):
-            raise ValueError("summary.canvas must be single, multi_panel or collage")
+            raise ValueError(f"summary.canvas is {summary.get('canvas')!r}; expected single, multi_panel or collage (none is only the UI auto setting)")
+        if canvas in ("single", "multi_panel", "collage") and summary["canvas"] != canvas:
+            raise ValueError(f"User selected canvas={canvas}, but the model returned {summary['canvas']!r}. Preserve the user's canvas selection.")
     return draft, compile_prompt(draft)

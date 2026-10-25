@@ -31,10 +31,11 @@ def data_list(value, location):
         raise ValueError(f"{location} 必须是数组。")
     return data
 
-def metadata(meta, canvas, palette, content_type):
+def metadata(meta, canvas, palette, content_type, resolved_canvas=""):
     return {
         "meta": string_list(meta, "meta"),
-        "canvas": canvas if canvas in CANVASES else ("multi_panel" if content_type == "comic" else "single"),
+        "canvas": canvas if canvas in CANVASES else (
+            resolved_canvas if resolved_canvas in CANVASES else ("multi_panel" if content_type == "comic" else "single")),
         "palette": string_list(palette, "palette"),
     }
 
@@ -48,14 +49,14 @@ def complete_summary(summary, fallback, content_type):
     if "canvas" not in result:
         result["canvas"] = fallback.get("canvas") or ("multi_panel" if content_type == "comic" else "single")
     if result["canvas"] not in CANVASES:
-        raise ValueError("summary.canvas 必须是 single、multi_panel 或 collage。")
+        raise ValueError(f"summary.canvas 值为 {result['canvas']!r}；输出只接受 single、multi_panel 或 collage。界面的 none 表示自动判定，不是输出值。")
     if "palette" not in result and fallback.get("palette"):
         result["palette"] = copy.deepcopy(fallback["palette"])
     if "palette" in result:
         result["palette"] = string_list(result["palette"], "summary.palette")
     return result
 
-def import_draft(source, width, height, fallback, content_type="auto"):
+def import_draft(source, width, height, fallback, content_type="auto", canvas_selection="none"):
     if not isinstance(source, dict):
         raise ValueError("导入内容必须是 MOSS JSON 对象。")
     if "caption" in source and "items" not in source:
@@ -68,6 +69,8 @@ def import_draft(source, width, height, fallback, content_type="auto"):
     if not isinstance(items, list):
         raise ValueError("导入 Layout 缺少 items 数组。")
     summary = complete_summary(source.get("summary"), fallback, content_type)
+    if canvas_selection in CANVASES:
+        summary["canvas"] = canvas_selection
     if not items:
         draft = {"caption": summary.get("caption", "")}
         compile_prompt(draft)
@@ -103,7 +106,7 @@ def import_draft(source, width, height, fallback, content_type="auto"):
     compile_prompt(draft)
     return draft
 
-def parse_import(text, width, height, fallback, content_type="auto"):
+def parse_import(text, width, height, fallback, content_type="auto", canvas_selection="none"):
     value = text.strip()
     if not value:
         raise ValueError("import_json 不能为空。")
@@ -116,16 +119,18 @@ def parse_import(text, width, height, fallback, content_type="auto"):
     if fence:
         value = fence.group(1)
     source = loads(value)
-    draft = import_draft(source, width, height, fallback, content_type)
+    draft = import_draft(source, width, height, fallback, content_type, canvas_selection)
     if isinstance(source.get("summary"), dict):
         fallback = {k: v for k, v in complete_summary(source["summary"], fallback, content_type).items()
                     if k != "caption"}
+    if canvas_selection in CANVASES:
+        fallback["canvas"] = canvas_selection
     return draft, fallback
 
-def editor_draft(prompt, elements_data, meta, canvas, style_palette_data, width, height, content_type):
+def editor_draft(prompt, elements_data, meta, canvas, style_palette_data, width, height, content_type, resolved_canvas=""):
     boxes = data_list(elements_data, "elements_data")
     palette = data_list(style_palette_data, "style_palette_data")
-    fallback = metadata(meta, canvas, palette, content_type)
+    fallback = metadata(meta, canvas, palette, content_type, resolved_canvas)
     if not boxes:
         if not prompt.strip():
             return None, fallback

@@ -2206,7 +2206,10 @@ app.registerExtension({
         closeInlineEditor();
         node._boxes = []; node._activeIdx = -1; node._selection = new Set(); node._stylePalette = [];
         node._lastImported = "";
-        if (spec.clearCaptionOnReset) setWidgetVal("prompt", "");
+        if (spec.clearCaptionOnReset) {
+          setWidgetVal("prompt", "");
+          setWidgetVal("resolved_canvas", "");
+        }
         commit(); rebuildStylePalette(); fitCanvas();   // a wired import re-seeds on the next run (serializeValue cache-busts)
       });
 
