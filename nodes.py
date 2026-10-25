@@ -305,9 +305,23 @@ class MOSSPromptEnhancerLocal:
             except ValueError as exc:
                 if attempt:
                     raise ValueError(f"MOSS 格式校验失败（已自动修复一次）：{exc}\n模型输出：{raw[:2000]}") from exc
+                info["repair_error"] = str(exc)
+                repair = (
+                    f"Repair this JSON draft. Validation error: {exc}. "
+                    "Return a complete draft matching the requested output mode and canvas. "
+                    "Preserve the requested scene, valid visual items, and any exact visible wording supplied by the user. "
+                    "A Layout needs real visual units, not one instance of every label type. "
+                    "If there is no lettering, create character/object items for the actual subjects and scene. "
+                    "An empty text item or a caption saying 'no typography' is not a visible unit: "
+                    "remove that placeholder and rebuild the missing visual items from the original brief, image and summary. "
+                    "Do not invent a title/dialogue or fill text with a space, N/A or a bracketed description just to pass validation. "
+                    "Never return an empty items array in Layout mode; do not change to Caption mode to evade the error. "
+                    "Text items require actual nonempty visible wording; character/object items omit text. "
+                    "Return only one complete valid JSON object."
+                )
                 messages.extend([
                     {"role": "assistant", "content": raw},
-                    {"role": "user", "content": f"Repair this JSON draft. Error: {exc}. Preserve requested content and exact copy; return one valid draft only."},
+                    {"role": "user", "content": repair},
                 ])
         mm.throw_exception_if_processing_interrupted()
         info.update(seconds=round(time.monotonic() - started, 2), usage=usage, repair_attempts=attempt)

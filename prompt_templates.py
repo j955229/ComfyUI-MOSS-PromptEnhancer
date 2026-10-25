@@ -80,7 +80,15 @@ meta describes only medium/genre, for example ["anime illustration","noir"] or [
 Do not put gender, hair, outfits, pose, character identity, camera, lighting, redundant synonyms or invented compound tags in meta; describe those in captions.
 Item tags are optional string arrays. Do not output palette fields in summary or items; editor color swatches are user-managed. Describe relevant visual colors in captions. meta must not contain quality/score/artist tags.
 items is a nonempty flat array. Each item requires label (object/character/text), nonempty caption and bbox.
-A text item additionally requires nonempty text containing the exact visible wording. Describe its typography/carrier in caption.
+The items array represents visible units, not a checklist of all possible label types. A layout does not require any text items.
+Use character for visible people/creatures and object for independently placed props, scene regions or panel backgrounds.
+For a scene without lettering, output only visual character/object items. Never create an item to state "no text", "no typography" or "no dialogue".
+Do not satisfy the nonempty items requirement with a text placeholder. The described main subject must actually appear in the items.
+Use text only for exact visible wording explicitly requested by the user or legibly observed in an image.
+Every text item requires a nonempty text value and a caption describing its typography/carrier.
+Never emit empty/whitespace text, "[red neon fragment]", "[unreadable text]", "N/A" or similar explanatory placeholders as lettering.
+Unspecified/illegible lettering can be described as a visual sign/object without inventing exact characters.
+Non-text items must omit the text field completely.
 Every bbox is actual full-canvas top-left pixel [x_min,y_min,x_max,y_max], with positive area inside the supplied dimensions.
 All elements including lettering on objects and comic-panel contents use global coordinates. Natural overlap is allowed.
 Do not center, quantize or reorder coordinates; application code compiles them. Do not output percentages, nested coordinates, IDs or extra schema fields.

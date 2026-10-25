@@ -8,14 +8,16 @@ from .vendor.compile_prompt import compile_prompt, reject_constant, unique_objec
 
 STRINGS = {"type": "array", "items": {"type": "string"}}
 CAPTION_SCHEMA = {
-    "type": "object", "properties": {"caption": {"type": "string"}},
+    "type": "object", "properties": {"caption": {"type": "string", "minLength": 1}},
     "required": ["caption"], "additionalProperties": False,
 }
 ITEM_PROPERTIES = {
     "label": {"enum": ["object", "character", "text"]},
-    "caption": {"type": "string"},
+    "caption": {"type": "string", "minLength": 1},
     "bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
-    "text": {"type": "string"}, "tags": STRINGS,
+    "text": {"type": "string", "minLength": 1,
+             "description": "Exact visible wording only. If no lettering exists, create visual character/object items instead of a text placeholder."},
+    "tags": STRINGS,
 }
 LAYOUT_SCHEMA = {
     "type": "object",
@@ -25,19 +27,19 @@ LAYOUT_SCHEMA = {
         "summary": {
             "type": "object",
             "properties": {
-                "caption": {"type": "string"}, "meta": {**STRINGS, "minItems": 1, "maxItems": 3, "uniqueItems": True},
+                "caption": {"type": "string", "minLength": 1}, "meta": {**STRINGS, "minItems": 1, "maxItems": 3, "uniqueItems": True},
                 "canvas": {"enum": ["single", "multi_panel", "collage"]},
             },
             "required": ["caption", "meta", "canvas"], "additionalProperties": False,
         },
         "items": {
             "type": "array", "minItems": 1, "items": {"oneOf": [
-                {"type": "object", "properties": {**ITEM_PROPERTIES, "label": {"const": "text"}},
-                 "required": ["label", "caption", "bbox", "text"], "additionalProperties": False},
                 {"type": "object",
-                 "properties": {k: ({"enum": ["object", "character"]} if k == "label" else v)
+                 "properties": {k: ({"enum": ["character", "object"]} if k == "label" else v)
                                 for k, v in ITEM_PROPERTIES.items() if k != "text"},
                  "required": ["label", "caption", "bbox"], "additionalProperties": False},
+                {"type": "object", "properties": {**ITEM_PROPERTIES, "label": {"const": "text"}},
+                 "required": ["label", "caption", "bbox", "text"], "additionalProperties": False},
             ]},
         },
     },
@@ -116,6 +118,22 @@ def validate_response(raw, mode, width, height, canvas="none"):
         if not isinstance(summary, dict):
             raise ValueError("Layout requires summary")
         items = draft.get("items")
+        if isinstance(items, list):
+            for index, item in enumerate(items):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("label") == "text":
+                    visible = item.get("text")
+                    if not isinstance(visible, str) or not visible.strip():
+                        raise ValueError(
+                            f"items[{index}] is a text item without visible wording. "
+                            "A scene with no lettering must contain character/object items, not a 'no text' placeholder. "
+                            "Rebuild the actual visible people/objects from the brief and summary; do not invent lettering."
+                        )
+                elif "text" in item:
+                    raise ValueError(
+                        f"items[{index}] is not a text item: remove its text field and preserve its visual caption/bbox."
+                    )
         if "palette" in summary or (isinstance(items, list) and any(
                 isinstance(item, dict) and "palette" in item for item in items)):
             raise ValueError("Do not generate palette fields; color swatches are edited manually in the editor.")
