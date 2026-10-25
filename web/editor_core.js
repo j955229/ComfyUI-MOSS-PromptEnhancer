@@ -120,10 +120,43 @@ export function pyJson(v, lvl = 0, ind = "    ") {
 // ["#rrggbb", ...] -> ["#RRGGBB", ...], dropping empties (matches Python _palette).
 export function cleanPalette(arr) { return (arr || []).filter((c) => c).map((c) => c.toUpperCase()); }
 
+// Palette values are model data: CSS names, short hex, rgb(), or descriptive strings.
+// Normalize for drawing only; never rewrite the palette stored in the prompt.
+const displayColorCache = new Map();
+let colorProbe = null;
+function displayColor(value) {
+  if (typeof value !== "string" || !value.trim()) return "#8c8c8c";
+  const key = value.trim();
+  if (displayColorCache.has(key)) return displayColorCache.get(key);
+  if (!colorProbe) {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    colorProbe = canvas.getContext("2d", { willReadFrequently: true });
+  }
+  if (!colorProbe) return "#8c8c8c";
+  const css = /^[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(key) ? "#" + key : key;
+  // Invalid fillStyle assignments retain the prior value. Two sentinels detect
+  // that behavior without inheriting the previous box/background paint.
+  colorProbe.fillStyle = "#010203";
+  colorProbe.fillStyle = css;
+  const first = colorProbe.fillStyle;
+  colorProbe.fillStyle = "#040506";
+  colorProbe.fillStyle = css;
+  let result = "#8c8c8c";
+  if (first === colorProbe.fillStyle) {
+    colorProbe.clearRect(0, 0, 1, 1);
+    colorProbe.fillRect(0, 0, 1, 1);
+    const rgba = colorProbe.getImageData(0, 0, 1, 1).data;
+    if (rgba[3]) result = "#" + Array.from(rgba.slice(0, 3), (n) => n.toString(16).padStart(2, "0")).join("");
+  }
+  if (displayColorCache.size >= 256) displayColorCache.clear();
+  displayColorCache.set(key, result);
+  return result;
+}
+
 // Parse a #rrggbb hex into {r,g,b}, or null if malformed.
 function hexRgb(hex) {
-  const h = (hex || "").replace("#", "");
-  if (h.length < 6) return null;
+  const h = displayColor(hex).slice(1);
   return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
 }
 // Perceived luminance (0-255) of an {r,g,b}.
@@ -683,13 +716,6 @@ app.registerExtension({
       sizeSlider.title = "Region text font size";
       stopProp(sizeSlider);
       sizeSlider.addEventListener("input", () => { node.properties.textSize = parseInt(sizeSlider.value, 10); drawCanvas(); });
-      const boxOpacSlider = document.createElement("input");
-      boxOpacSlider.type = "range"; boxOpacSlider.min = "0"; boxOpacSlider.max = "100"; boxOpacSlider.step = "1";
-      boxOpacSlider.value = node.properties.boxOpacity == null ? 14 : node.properties.boxOpacity;
-      boxOpacSlider.style.cssText = "width:90px;flex:0 0 auto;";
-      boxOpacSlider.title = "Box fill opacity";
-      stopProp(boxOpacSlider);
-      boxOpacSlider.addEventListener("input", () => { node.properties.boxOpacity = parseInt(boxOpacSlider.value, 10); drawCanvas(); });
       const txtMenu = document.createElement("div");
       txtMenu.className = "kjideo-menu kjideo-bgmenu";
       txtMenu.style.display = "none";
@@ -698,7 +724,7 @@ app.registerExtension({
         if (labelText) { const l = document.createElement("span"); l.className = "kjideo-bglbl"; l.textContent = labelText; r.appendChild(l); }
         r.appendChild(el); txtMenu.appendChild(r);
       };
-      txtRow("", showLbl); txtRow("Font size", sizeSlider); txtRow("Box opacity", boxOpacSlider); txtRow("", strokeLbl); txtRow("", autoLbl);
+      txtRow("", showLbl); txtRow("Font size", sizeSlider); txtRow("", strokeLbl); txtRow("", autoLbl);
       document.body.appendChild(txtMenu);
       node._txtMenu = txtMenu;
       const txtDismiss = outsideDismiss(txtMenu, () => closeTxtMenu(), txtBtn);
@@ -1488,20 +1514,14 @@ app.registerExtension({
         const textB = textBlocks();                           // collision-avoided in-box text positions
         for (const i of order) {
           const b = node._boxes[i], active = i === aIdx, selected = selSet.has(i) && !b.locked;  // locked never shows as selected
-          const pal = (b.palette || []).filter(Boolean);
+          const pal = (b.palette || []).filter(Boolean).map(displayColor);
           const col = pal.length ? pal[0] : "#8c8c8c";       // box color = first palette color, else neutral grey
           const { x1, y1, x2, y2 } = toPx(b);
           const w = x2 - x1, h = y2 - y1;
           const hovered = (i === node._hoverBox && !b.locked) || selected;  // locked boxes don't hover; selected stay highlighted
-          if (selected) {                                    // opaque backing so contents read clearly over boxes behind
-            ctx.fillStyle = "rgba(26,26,26,0.88)";
-            ctx.fillRect(x1, y1, w, h);
-          }
           if (b.ref && !b.nobbox && spec.refs) drawRef(b, x1, y1, w, h);   // under the tint, outline and text
-          const baseA = (node.properties.boxOpacity == null ? 14 : node.properties.boxOpacity) / 100;
-          const fillA = Math.min(1, hovered ? baseA + 0.1 : baseA);   // box-color tint at the chosen opacity
-          ctx.fillStyle = col + Math.round(fillA * 255).toString(16).padStart(2, "0");
-          ctx.fillRect(x1, y1, w, h);
+          // Region palettes identify badges, outlines and swatches only.
+          // Keep the box interior transparent so it never covers the layout or background.
           if (b.locked) ctx.setLineDash([3, 3]);             // locked: frozen on the canvas
           else if (b.nobbox) ctx.setLineDash([6, 4]);        // unplaced (no bbox in source)
           const lw = selected ? 2 : (hovered ? 1.5 : 1);
@@ -2782,7 +2802,6 @@ app.registerExtension({
         strokeLbl._cb.checked = node.properties.textStroke !== false;
         autoLbl._cb.checked = node.properties.textAutoPlace !== false;
         sizeSlider.value = node.properties.textSize || 12;
-        boxOpacSlider.value = node.properties.boxOpacity == null ? 14 : node.properties.boxOpacity;
         syncCanvasToDims();
         rebuildStylePalette();
         rebuildViews();
