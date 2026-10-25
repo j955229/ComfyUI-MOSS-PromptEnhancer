@@ -296,9 +296,10 @@ class MOSSPromptEnhancerLocal:
     def _infer(self, chat, messages, output_mode, width, height, seed, max_tokens, temperature,
                sampling, fallback, canvas_selection, output_format, info, started):
         usage = {}
+        schema = output_schema(output_mode, canvas_selection, width, height)
         for attempt in range(2):
             mm.throw_exception_if_processing_interrupted()
-            raw, current_usage = chat(messages, output_schema(output_mode, canvas_selection), seed, max_tokens, temperature,
+            raw, current_usage = chat(messages, schema, seed, max_tokens, temperature,
                                       sampling=sampling)
             for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
                 value = current_usage.get(key)
@@ -318,6 +319,11 @@ class MOSSPromptEnhancerLocal:
                 repair = (
                     f"Repair this JSON draft. Validation error: {exc}. "
                     "Return a complete draft matching the requested output mode and canvas. "
+                    f"There is ONE page, width={width}, height={height}. "
+                    f"Every bbox must satisfy 0 <= x0 < x1 <= {width} and 0 <= y0 < y1 <= {height}. "
+                    "All panels share this one coordinate space; do not concatenate full-sized pages horizontally or vertically. "
+                    "Re-plan invalid regions freely inside this page, preserving the requested scene. "
+                    "Do not keep overflowing coordinates, enlarge the page, clip/delete subjects, or change only coordinate labels. "
                     "Preserve the requested scene, valid visual items, and any exact visible wording supplied by the user. "
                     "A Layout needs real visual units, not one instance of every label type. "
                     "If there is no lettering, create character/object items for the actual subjects and scene. "

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
 import re
+import math
 from copy import deepcopy
 
 from .prompt_templates import instructions
@@ -47,12 +48,27 @@ LAYOUT_SCHEMA = {
     "additionalProperties": False,
 }
 
-def output_schema(mode, canvas="none"):
-    layout = deepcopy(LAYOUT_SCHEMA)
-    if canvas in ("single", "multi_panel", "collage"):
-        layout["properties"]["summary"]["properties"]["canvas"] = {"const": canvas}
+def output_schema(mode, canvas="none", width=None, height=None):
     if mode == "caption":
         return CAPTION_SCHEMA
+    layout = deepcopy(LAYOUT_SCHEMA)
+    if width is not None and height is not None:
+        # Integer tuple bounds are enforced by llama.cpp during constrained decoding.
+        layout["properties"]["width"] = {"const": width}
+        layout["properties"]["height"] = {"const": height}
+        bounds = [
+            {"type": "integer", "minimum": 0, "maximum": width - 1},
+            {"type": "integer", "minimum": 0, "maximum": height - 1},
+            {"type": "integer", "minimum": 1, "maximum": width},
+            {"type": "integer", "minimum": 1, "maximum": height},
+        ]
+        for item_schema in layout["properties"]["items"]["items"]["oneOf"]:
+            item_schema["properties"]["bbox"] = {
+                "type": "array", "prefixItems": deepcopy(bounds), "minItems": 4, "maxItems": 4,
+                "description": f"Global xyxy pixels on ONE {width}x{height} page. All panels share these bounds.",
+            }
+    if canvas in ("single", "multi_panel", "collage"):
+        layout["properties"]["summary"]["properties"]["canvas"] = {"const": canvas}
     if mode == "layout" or (mode == "auto" and canvas in ("multi_panel", "collage")):
         return layout
     return {"oneOf": [CAPTION_SCHEMA, layout]}
@@ -68,6 +84,16 @@ def build_messages(request, mode, language, width, height, previous_prompt="", i
         "\nCANVAS TYPE: single is one continuous composition; multi_panel has distinct narrative panels; "
         "collage combines multiple visual pieces as a montage. Subject count is independent of canvas type."
     )
+    if mode != "caption":
+        system += (
+            f"\nHARD PAGE BOUNDS: There is exactly ONE page of width {width} and height {height}. "
+            f"Every bbox is an INTEGER [x0,y0,x1,y1] with 0 <= x0 < x1 <= {width} "
+            f"and 0 <= y0 < y1 <= {height}. "
+            "All panels and collage pieces must fit inside this SAME page. "
+            "Do not concatenate full-sized pages by adding the page width or height for each panel. "
+            "Choose panel sizes/positions freely within the page; no fixed grid is imposed. "
+            "For a new panel choose a region inside the page, never a coordinate origin outside it."
+        )
     if canvas in ("single", "multi_panel", "collage"):
         system += (
             f"\nThe user explicitly selected canvas={canvas}. Plan the image accordingly. "
@@ -120,6 +146,29 @@ def build_messages(request, mode, language, width, height, previous_prompt="", i
         content = [{"type": "text", "text": content},
                    {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}}]
     return [{"role": "system", "content": system}, {"role": "user", "content": content}]
+
+def layout_geometry_issues(draft, width, height):
+    items = draft.get("items")
+    if not isinstance(items, list):
+        return []
+    issues = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        box = item.get("bbox")
+        if not isinstance(box, list) or len(box) != 4:
+            issues.append(f"items[{index}].bbox={box!r}: expected [x0,y0,x1,y1]")
+            continue
+        if any(type(value) not in (int, float) or not math.isfinite(value) for value in box):
+            issues.append(f"items[{index}].bbox={box!r}: coordinates must be finite numbers")
+            continue
+        x0, y0, x1, y1 = box
+        if not (0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height):
+            issues.append(
+                f"items[{index}].bbox={box!r}: require 0 <= x0 < x1 <= {width}, "
+                f"0 <= y0 < y1 <= {height}"
+            )
+    return issues
 
 def validate_description_language(draft, language):
     if language not in ("中文", "English"):
@@ -175,6 +224,15 @@ def validate_response(raw, mode, width, height, canvas="none", language=None,
         summary = draft.get("summary")
         if not isinstance(summary, dict):
             raise ValueError("Layout requires summary")
+        issues = layout_geometry_issues(draft, width, height)
+        if issues:
+            details = "\n".join(issues[:8])
+            extra = f"\n... and {len(issues) - 8} more invalid boxes." if len(issues) > 8 else ""
+            raise ValueError(
+                f"Layout geometry is invalid on the ONE {width}x{height} page:\n{details}{extra}\n"
+                "Rearrange every invalid box inside this page. Panels do not each receive another full-width page. "
+                "Do not change the target size, clip/delete content, or merely relabel the coordinate format."
+            )
         items = draft.get("items")
         if isinstance(items, list):
             for index, item in enumerate(items):

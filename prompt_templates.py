@@ -90,7 +90,9 @@ Never emit empty/whitespace text, "[red neon fragment]", "[unreadable text]", "N
 Unspecified/illegible lettering can be described as a visual sign/object without inventing exact characters.
 Non-text items must omit the text field completely.
 Every bbox is actual full-canvas top-left pixel [x_min,y_min,x_max,y_max], with positive area inside the supplied dimensions.
-All elements including lettering on objects and comic-panel contents use global coordinates. Natural overlap is allowed.
+All elements including lettering on objects and comic-panel contents use global coordinates on ONE page. Natural overlap is allowed.
+Every comic panel must fit inside that same page; never append a full-width or full-height page for each panel.
+Multiple panels do not multiply the page dimensions. Plan each panel as a region within the supplied page, without a fixed-grid requirement.
 Do not center, quantize or reorder coordinates; application code compiles them. Do not output percentages, nested coordinates, IDs or extra schema fields.
 Describe intended visible borders explicitly; a placement box alone does not mean a border should be drawn.
 Honor the requested output mode. Auto chooses caption for ordinary scenes; layout when independent placement/text blocks/panels matter.
