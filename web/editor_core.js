@@ -1544,7 +1544,7 @@ app.registerExtension({
             const stroke = node.properties.textStroke !== false;
             ctx.font = tb.fs + "px monospace";
             if (stroke) { ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(0,0,0,0.85)"; }  // dark halo
-            ctx.fillStyle = readableText(col);              // box color, lightened if too dark
+            ctx.fillStyle = "#eeeeee";                       // UI descriptions stay readable, independent of model palette
             let ty = tb.y + tb.fs;
             for (const line of tb.lines) {
               if (stroke) ctx.strokeText(line, tb.x + tb.pad, ty);
