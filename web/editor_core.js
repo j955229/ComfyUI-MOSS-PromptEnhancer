@@ -157,7 +157,8 @@ function displayColor(value) {
 // Editor annotation colors are user-owned UI state, separate from image palettes.
 // Old/generated/imported items start with one neutral gray; saved manual colors survive reloads.
 function regionPalette(box) {
-  const values = Array.isArray(box.editorPalette) ? box.editorPalette : ["#8c8c8c"];
+  const values = box.editorPaletteUserSet === true && Array.isArray(box.editorPalette)
+    ? box.editorPalette : ["#8c8c8c"];
   return values.filter((color) => typeof color === "string" && color.trim()).map(displayColor);
 }
 
@@ -2596,10 +2597,11 @@ app.registerExtension({
           const palRow = document.createElement("div");
           palRow.className = "kjideo-row";
           const pl = document.createElement("span"); pl.textContent = "colors:"; palRow.appendChild(pl);
-          if (!Array.isArray(b.editorPalette)) b.editorPalette = ["#8c8c8c"];
+          if (b.editorPaletteUserSet !== true || !Array.isArray(b.editorPalette)) b.editorPalette = ["#8c8c8c"];
           const editedColor = () => {
             // Preserve KJ's explicit palette-edit behavior, but do not apply an
             // LLM's artwork palette to the editor's annotation colors automatically.
+            b.editorPaletteUserSet = true;
             b.palette = b.editorPalette.slice();
             swatchEdit();
           };

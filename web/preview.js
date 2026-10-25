@@ -24,7 +24,8 @@ const ADVANCED = new Set(["llama_server_path", "timeout_seconds", "api_key_env",
   "api_max_tokens_field", "api_send_seed", "thinking", "mtp", "repetition_penalty", "presence_penalty"]);
 const SAMPLING = new Set(["temperature", "seed", "control_after_generate", "top_k", "top_p", "min_p",
   "repetition_penalty", "presence_penalty"]);
-const HIDDEN = new Set(["elements_data", "style_palette_data", "bg_brightness", "output_format"]);
+// Keep the global caption as internal editor state, without the redundant node textarea.
+const HIDDEN = new Set(["prompt", "elements_data", "style_palette_data", "bg_brightness", "output_format"]);
 
 function visible(widget, show) {
   if (!widget._mossOriginal) widget._mossOriginal = {

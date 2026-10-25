@@ -24,7 +24,7 @@ LAYOUT_SCHEMA = {
         "summary": {
             "type": "object",
             "properties": {
-                "caption": {"type": "string"}, "meta": {**STRINGS, "minItems": 1},
+                "caption": {"type": "string"}, "meta": {**STRINGS, "minItems": 1, "maxItems": 3, "uniqueItems": True},
                 "canvas": {"enum": ["single", "multi_panel", "collage"]},
             },
             "required": ["caption", "meta", "canvas"], "additionalProperties": False,
@@ -104,6 +104,12 @@ def validate_response(raw, mode, width, height):
             raise ValueError("Do not generate palette fields; color swatches are edited manually in the editor.")
         if "meta" not in summary or not isinstance(summary["meta"], list) or not summary["meta"]:
             raise ValueError("summary.meta must be a nonempty string array of medium/genre tags")
+        if len(summary["meta"]) > 3:
+            raise ValueError("summary.meta must contain only 1-3 concise medium/genre tags, not character attributes or a general tag list")
+        if all(isinstance(tag, str) for tag in summary["meta"]):
+            normalized_meta = [tag.strip().casefold() for tag in summary["meta"]]
+            if len(normalized_meta) != len(set(normalized_meta)):
+                raise ValueError("summary.meta tags must not repeat")
         if summary.get("canvas") not in ("single", "multi_panel", "collage"):
             raise ValueError("summary.canvas must be single, multi_panel or collage")
     return draft, compile_prompt(draft)

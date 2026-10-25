@@ -75,7 +75,9 @@ Use visible evidence for retained parts and describe explicitly requested change
 FORMAT = """OUTPUT CONTRACT: You have no tools. Return only one standard JSON object, without fences, prose, reasoning or file paths.
 Caption draft: exactly {"caption":"complete prose"}. No coordinates or layout fields.
 Layout draft: exactly width, height, bbox_coord_space="abs", bbox_format="xyxy", summary, items.
-summary requires nonempty caption, meta (nonempty string array of meaningful medium/genre tags) and canvas (single, multi_panel or collage).
+summary requires nonempty caption, meta (1-3 concise, distinct medium/genre tags) and canvas (single, multi_panel or collage).
+meta describes only medium/genre, for example ["anime illustration","noir"] or ["poster"]; it is not a general prompt tag list.
+Do not put gender, hair, outfits, pose, character identity, camera, lighting, redundant synonyms or invented compound tags in meta; describe those in captions.
 Item tags are optional string arrays. Do not output palette fields in summary or items; editor color swatches are user-managed. Describe relevant visual colors in captions. meta must not contain quality/score/artist tags.
 items is a nonempty flat array. Each item requires label (object/character/text), nonempty caption and bbox.
 A text item additionally requires nonempty text containing the exact visible wording. Describe its typography/carrier in caption.
