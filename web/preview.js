@@ -41,7 +41,25 @@ function visible(widget, show) {
   if (widget.inputEl) widget.inputEl.style.display = show ? "" : "none";
 }
 
+function sceneNotice(message) {
+  const toast = app.extensionManager?.toast;
+  if (typeof toast?.add === "function") {
+    toast.add({ severity: "info", summary: "MOSS Prompt Enhancer", detail: message, life: 12000 });
+  } else window.alert("MOSS Prompt Enhancer\n\n" + message);
+}
+
+function reconcileSingleIllustration(node) {
+  const find = (name) => node.widgets?.find((w) => w.name === name);
+  const canvas = find("canvas");
+  if (find("content_type")?.value === "illustration" &&
+      find("character_mode")?.value === "single" && canvas?.value === "multi_panel") {
+    canvas.value = "single";
+    sceneNotice("單人物插畫已使用 single 畫布。多個衣服／配件定位框由 Layout 提供；multi_panel 代表多分格，會引導模型安排不同鏡頭。");
+  }
+}
+
 function refresh(node) {
+  reconcileSingleIllustration(node);
   const get = (name) => node.widgets?.find((w) => w.name === name)?.value;
   const backend = get("backend") || "local", advanced = !!get("show_advanced");
   const sample = get("sampling_mode") !== "off";
@@ -81,7 +99,7 @@ app.registerExtension({
       const rank = new Map(ORDER.map((name, i) => [name, i]));
       this.widgets?.sort((a, b) => (rank.get(a.name) ?? 1000) - (rank.get(b.name) ?? 1000));
       for (const widget of this.widgets || []) {
-        if (["backend", "show_advanced", "sampling_mode", "api_send_seed"].includes(widget.name)) {
+        if (["backend", "show_advanced", "sampling_mode", "api_send_seed", "content_type", "character_mode", "canvas"].includes(widget.name)) {
           const callback = widget.callback;
           widget.callback = function () {
             const result = callback?.apply(this, arguments);
@@ -137,6 +155,12 @@ app.registerExtension({
     const executed = proto.onExecuted;
     proto.onExecuted = function (message) {
       const result = executed?.apply(this, arguments);
+      const selection = message?.canvas_selection?.[0];
+      if (["none", "single", "multi_panel", "collage"].includes(selection)) {
+        const widget = this.widgets?.find((w) => w.name === "canvas");
+        if (widget) widget.value = selection;
+      }
+      if (message?.moss_notice?.[0]) sceneNotice(message.moss_notice[0]);
       const resolved = message?.resolved_canvas?.[0];
       if (["single", "multi_panel", "collage"].includes(resolved)) {
         const widget = this.widgets?.find((w) => w.name === "resolved_canvas");

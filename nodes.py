@@ -121,7 +121,7 @@ class MOSSPromptEnhancerLocal:
         inputs["optional"].update({
             "clip": ("CLIP", {"lazy": True, "tooltip": "仅 CLIP 后端：连接支持 generate 的 ComfyUI 模型；普通 CLIP 编码器不能生成文字。"}),
             "content_type": (list(CONTENT_TYPES), {"default": "auto", "tooltip": "切换实际发送给 LLM 的内容模板；不使用固定格线。"}),
-            "character_mode": (list(CHARACTER_MODES), {"default": "auto", "tooltip": "人物规则与内容模板组合；明确需求优先。"}),
+            "character_mode": (list(CHARACTER_MODES), {"default": "auto", "tooltip": "人物规则与内容模板组合。single + illustration 表示画面只出现一个人物实例；衣服配件可用 object 项定位。"}),
             "sampling_mode": (["on", "off"], {"default": "on"}),
             "top_k": ("INT", {"default": 64, "min": 0, "max": 1000}),
             "top_p": ("FLOAT", {"default": 0.95, "min": 0.0, "max": 1.0, "step": 0.01}),
@@ -134,7 +134,7 @@ class MOSSPromptEnhancerLocal:
             "prompt": ("STRING", {"multiline": True, "default": "", "tooltip": "编辑器的全局描述；when empty 且已有内容时直接输出，不重新调用 LLM。"}),
             "meta": ("STRING", {"default": "", "tooltip": "媒介/体裁标签，逗号或换行分隔。"}),
             "canvas": (["none", "single", "multi_panel", "collage"],
-                       {"default": "none", "tooltip": "none：自动判断且保持此选择；single / multi_panel / collage：明确指定生成的画面类型。"}),
+                       {"default": "none", "tooltip": "none：自动；single：同一画面，可含多个定位框；multi_panel：多分格；collage：拼贴。单人物插画的局部定位使用 single + Layout。"}),
             "import_json": ("STRING", {"default": "", "forceInput": True, "lazy": True, "tooltip": "导入 MOSS 最终 JSON、像素草稿或 Caption；有输入时作为新内容来源。"}),
             "import_mode": (["when empty", "always"], {"default": "when empty",
                             "tooltip": "when empty：保留已编辑内容并略过 LLM；always：每次采用导入或新生成内容。"}),
@@ -194,6 +194,10 @@ class MOSSPromptEnhancerLocal:
                  thinking=False, mtp="auto", prompt="", meta="", canvas="none", import_json="",
                  import_mode="when empty", elements_data="", style_palette_data="",
                  bg_brightness=25, output_format="compact", show_advanced=False, resolved_canvas=""):
+        requested_canvas = canvas
+        if character_mode == "single" and content_type == "illustration" and canvas == "multi_panel":
+            # Single-person detail boxes are one image, not repeated narrative views.
+            canvas = "single"
         if canvas not in ("none", "single", "multi_panel", "collage"):
             raise ValueError(f"canvas={canvas!r} 无效；请选择 none、single、multi_panel 或 collage。")
         if import_mode not in ("when empty", "always"):
@@ -246,6 +250,7 @@ class MOSSPromptEnhancerLocal:
             "character_mode": character_mode, "source": "generated", "llm_called": True,
             "input": "image+text" if has_image else "text", "canvas": [width, height],
             "seed": seed, "sampling_mode": sampling_mode, "canvas_selection": canvas,
+            "requested_canvas": requested_canvas, "language": language,
         }
         if has_image:
             info["image"] = {"width": int(image.shape[2]), "height": int(image.shape[1]),
@@ -300,7 +305,11 @@ class MOSSPromptEnhancerLocal:
                 if isinstance(value, (int, float)):
                     usage[key] = usage.get(key, 0) + value
             try:
-                draft, _ = validate_response(raw, output_mode, width, height, canvas_selection)
+                draft, _ = validate_response(
+                    raw, output_mode, width, height, canvas_selection,
+                    language=info.get("language"), character_mode=info.get("character_mode", "auto"),
+                    content_type=info.get("content_type", "auto"),
+                )
                 break
             except ValueError as exc:
                 if attempt:
@@ -317,6 +326,9 @@ class MOSSPromptEnhancerLocal:
                     "Do not invent a title/dialogue or fill text with a space, N/A or a bracketed description just to pass validation. "
                     "Never return an empty items array in Layout mode; do not change to Caption mode to evade the error. "
                     "Text items require actual nonempty visible wording; character/object items omit text. "
+                    f"Use the selected descriptive language {info.get('language', 'English')} in EVERY caption, including the global and each item caption. "
+                    "Preserve exact visible text verbatim rather than translating it. "
+                    "For single-character illustration, use one visible person and one character item; clothing/accessories are object details of that same instance, not separate character views. "
                     "Return only one complete valid JSON object."
                 )
                 messages.extend([
@@ -337,6 +349,9 @@ class MOSSPromptEnhancerLocal:
         info = {**info, "mode": actual_mode, "canvas": [width, height], "canvas_type": payload["summary"]["canvas"]}
         info_text = json.dumps(info, ensure_ascii=False)
         ui = {"dims": [width, height], "moss_info": [info_text], "resolved_canvas": [payload["summary"]["canvas"]]}
+        if info.get("requested_canvas") == "multi_panel" and info.get("canvas_selection") == "single":
+            ui["canvas_selection"] = ["single"]
+            ui["moss_notice"] = ["單人物插畫使用 single 畫布；衣服與配件可用 Layout 的 object 框定位。multi_panel 代表多分格。"]
         if push:
             ui["caption"] = [json.dumps(payload, ensure_ascii=False)]
         # Match KJ's BOUNDING_BOX payload: bboxes[frame] is a list of pixel xywh dictionaries.

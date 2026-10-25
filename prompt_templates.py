@@ -54,7 +54,7 @@ CHARACTER_PROMPTS = {
     "auto": "CHARACTERS: Infer the requested count and focus; do not add incidental people unless the brief calls for them.",
     "single": """CHARACTERS: Default to one main character unless the explicit brief says otherwise.
 Bind identity, visible appearance, outfit, posture, gaze and prop contact to that character.
-Reflections/screens are representations, not unexplained extra people. In comics the same character may recur in multiple panels.""",
+Reflections/screens are representations, not unexplained extra people. Only the comic content task may repeat this identity in separate narrative panels. A single-character illustration has exactly one visible instance.""",
     "multiple": """CHARACTERS: Default to an interaction or ensemble unless the explicit brief says otherwise.
 Describe each person in separate clear clauses, binding hair/eyes/outfit, frame position, action and gaze to that person.
 State exact count when specified. Distinguish principals from background crowds and show who acts on whom.

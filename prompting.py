@@ -77,6 +77,31 @@ def build_messages(request, mode, language, width, height, previous_prompt="", i
             system += " Auto output must use a Layout draft for this explicit canvas type."
     else:
         system += "\nCanvas selection is automatic (none). Infer one valid output canvas type; never emit none."
+    if character_mode == "single" and content_type == "illustration":
+        system += (
+            "\nSINGLE-PERSON ILLUSTRATION CONTRACT: Exactly ONE visible person instance in ONE continuous scene. "
+            "Do not add extra views, close-up insets, storyboard panels, duplicated faces, repeated bodies or a character sheet. "
+            "For Layout create exactly ONE character item for the whole visible person. "
+            "Use separate OBJECT items to locate that SAME person's clothing, jewelry, holster, weapon and other attached details when useful. "
+            "Each detail caption must explicitly bind it to the same person and the same instant; do not describe an isolated duplicate garment/person. "
+            "Detail boxes may overlap the character box; they are placement annotations, not visible picture frames or extra panels. "
+            "Do not create separate character items for the face, hands, outfit or alternate pose. "
+            "Describe a single pose and viewpoint consistently in the global caption and all items."
+        )
+    if language == "中文":
+        system += (
+            "\n【強制輸出語言：繁體中文】即使 request 或舊稿是英文，所有敘述性 caption 都必須改寫為完整的繁體中文。"
+            "包括 Caption 的 caption、Layout 的 summary.caption 和每個 items[].caption。"
+            "meta 與 tags 的描述詞也使用中文。人名、作品名與必要專有名詞可以保留原名，但不能整段使用英文。"
+            "JSON 欄位名稱、label、canvas、bbox_coord_space、bbox_format 的枚舉維持英文。"
+            "只有畫面真正要印出的 text 原文維持使用者指定的語言、大小寫、標點與換行，不要翻譯。"
+            "輸出前逐一檢查每個 caption 都有中文敘述。"
+        )
+    else:
+        system += (
+            "\nREQUIRED OUTPUT LANGUAGE: Write all descriptive captions in English, even when the brief is Chinese. "
+            "Keep JSON keys/enums unchanged. Preserve actual visible text verbatim in its original language."
+        )
     user = {"request": request.strip(), "task": actual_task}
     if actual_task == "prompt_reverse" and not user["request"]:
         user["request"] = "Describe all applicable visible details faithfully for a reusable image prompt."
@@ -96,7 +121,40 @@ def build_messages(request, mode, language, width, height, previous_prompt="", i
                    {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}}]
     return [{"role": "system", "content": system}, {"role": "user", "content": content}]
 
-def validate_response(raw, mode, width, height, canvas="none"):
+def validate_description_language(draft, language):
+    if language not in ("中文", "English"):
+        return
+    descriptions = []
+    if "caption" in draft:
+        descriptions.append(("caption", draft["caption"]))
+    else:
+        summary = draft.get("summary")
+        if isinstance(summary, dict):
+            descriptions.append(("summary.caption", summary.get("caption")))
+        items = draft.get("items")
+        if isinstance(items, list):
+            descriptions.extend(
+                (f"items[{i}].caption", item.get("caption"))
+                for i, item in enumerate(items) if isinstance(item, dict)
+            )
+    for location, text in descriptions:
+        if not isinstance(text, str) or not text.strip():
+            continue  # The compiler reports missing/empty descriptions.
+        han = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", text))
+        latin = len(re.findall(r"[A-Za-z]", text))
+        if language == "中文" and (han < 2 or han / max(1, han + latin) < 0.15):
+            raise ValueError(
+                f"{location} does not follow language=中文. Rewrite EVERY descriptive caption in Traditional Chinese; "
+                "proper names may stay unchanged. Preserve actual visible text fields verbatim."
+            )
+        if language == "English" and han > latin:
+            raise ValueError(
+                f"{location} does not follow language=English. Rewrite descriptive captions in English; "
+                "preserve actual visible text fields verbatim."
+            )
+
+def validate_response(raw, mode, width, height, canvas="none", language=None,
+                      character_mode="auto", content_type="auto"):
     cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
     if "</think>" in cleaned:
         cleaned = cleaned.rsplit("</think>", 1)[1].strip()
@@ -149,4 +207,13 @@ def validate_response(raw, mode, width, height, canvas="none"):
             raise ValueError(f"summary.canvas is {summary.get('canvas')!r}; expected single, multi_panel or collage (none is only the UI auto setting)")
         if canvas in ("single", "multi_panel", "collage") and summary["canvas"] != canvas:
             raise ValueError(f"User selected canvas={canvas}, but the model returned {summary['canvas']!r}. Preserve the user's canvas selection.")
+        if character_mode == "single" and content_type == "illustration" and isinstance(items, list):
+            characters = [item for item in items if isinstance(item, dict) and item.get("label") == "character"]
+            if len(characters) != 1:
+                raise ValueError(
+                    f"Single-character illustration needs exactly one character item; got {len(characters)}. "
+                    "Keep one visible person in one continuous scene. Use object items for that same person's clothing/accessories/props. "
+                    "Remove repeated views, duplicate people and close-up character insets; preserve useful detail boxes as objects attached to the sole person."
+                )
+    validate_description_language(draft, language)
     return draft, compile_prompt(draft)
