@@ -154,6 +154,13 @@ function displayColor(value) {
   return result;
 }
 
+// Editor annotation colors are user-owned UI state, separate from image palettes.
+// Old/generated/imported items start with one neutral gray; saved manual colors survive reloads.
+function regionPalette(box) {
+  const values = Array.isArray(box.editorPalette) ? box.editorPalette : ["#8c8c8c"];
+  return values.filter((color) => typeof color === "string" && color.trim()).map(displayColor);
+}
+
 // Parse a #rrggbb hex into {r,g,b}, or null if malformed.
 function hexRgb(hex) {
   const h = displayColor(hex).slice(1);
@@ -1514,7 +1521,7 @@ app.registerExtension({
         const textB = textBlocks();                           // collision-avoided in-box text positions
         for (const i of order) {
           const b = node._boxes[i], active = i === aIdx, selected = selSet.has(i) && !b.locked;  // locked never shows as selected
-          const pal = (b.palette || []).filter(Boolean).map(displayColor);
+          const pal = regionPalette(b);
           const col = pal.length ? pal[0] : "#8c8c8c";       // box color = first palette color, else neutral grey
           const { x1, y1, x2, y2 } = toPx(b);
           const w = x2 - x1, h = y2 - y1;
@@ -1779,7 +1786,7 @@ app.registerExtension({
         ta.style.top = top + "px";
         ta.style.width = w + "px";
         ta.style.height = h + "px";
-        ta.style.borderColor = (b.palette || []).find(Boolean) || "#46b4e6";  // first palette color, else accent
+        ta.style.borderColor = regionPalette(b)[0] || "#8c8c8c";  // first palette color, else accent
         stopProp(ta);
         wrap.appendChild(ta);
         inlineTa = ta;
@@ -2066,7 +2073,7 @@ app.registerExtension({
             row._box = b;
             const sw = document.createElement("div");
             sw.className = "kjideo-lsw";
-            sw.style.background = (b.palette || []).find(Boolean) || "#8c8c8c";
+            sw.style.background = regionPalette(b)[0] || "#8c8c8c";
             const num = document.createElement("span");
             num.className = "kjideo-lnum"; num.textContent = String(i + 1).padStart(2, "0");
             const txt = document.createElement("span");
@@ -2528,7 +2535,7 @@ app.registerExtension({
           panel.appendChild(p);
           return;
         }
-        const col = (b.palette || []).find(Boolean) || "#bbb";
+        const col = regionPalette(b)[0] || "#8c8c8c";
         const selN = node._selection.size;
         // Build with DOM + style.color (a CSS value) — never innerHTML — since col comes from
         // box data that may be loaded from an untrusted template/import (avoids HTML injection).
@@ -2589,8 +2596,15 @@ app.registerExtension({
           const palRow = document.createElement("div");
           palRow.className = "kjideo-row";
           const pl = document.createElement("span"); pl.textContent = "colors:"; palRow.appendChild(pl);
-          b.palette = b.palette || [];
-          buildSwatchRow(palRow, b.palette, spec.maxElemColors, swatchEdit, commit);
+          if (!Array.isArray(b.editorPalette)) b.editorPalette = ["#8c8c8c"];
+          const editedColor = () => {
+            // Preserve KJ's explicit palette-edit behavior, but do not apply an
+            // LLM's artwork palette to the editor's annotation colors automatically.
+            b.palette = b.editorPalette.slice();
+            swatchEdit();
+          };
+          const changedColors = () => { editedColor(); commit(); };
+          buildSwatchRow(palRow, b.editorPalette, spec.maxElemColors, editedColor, changedColors);
           panel.appendChild(palRow);
         }
       }
