@@ -114,11 +114,16 @@ class LocalServer:
             self.close()
             raise
 
-    def chat(self, messages, schema, seed, max_tokens, temperature):
+    def chat(self, messages, schema, seed, max_tokens, temperature, sampling=None):
+        sampling = sampling or {}
         payload = {
             "model": "moss-local", "messages": messages, "stream": False,
             "seed": seed % 2147483647, "max_tokens": max_tokens,
-            "temperature": temperature, "top_p": 0.8, "top_k": 20,
+            "temperature": temperature if sampling.get("do_sample", True) else 0.0,
+            "top_p": sampling.get("top_p", 0.95), "top_k": sampling.get("top_k", 64),
+            "min_p": sampling.get("min_p", 0.05),
+            "repeat_penalty": sampling.get("repetition_penalty", 1.05),
+            "presence_penalty": sampling.get("presence_penalty", 0.0),
             "chat_template_kwargs": {"enable_thinking": False},
             "response_format": {"type": "json_object", "schema": schema},
         }

@@ -7,3 +7,15 @@ Upstream: https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-pro
 The local adapter replaces tool/file-writing instructions with JSON output,
 executes the official compiler in-process, and uses an existing local llama-server.
 The llama.cpp executable and model weights are not redistributed in this package.
+
+Integrated editor derived from kijai/ComfyUI-KJNodes (GNU GPL version 3).
+Upstream: https://github.com/kijai/ComfyUI-KJNodes
+Ported sources: web/js/ideogram4_prompt_builder.js,
+web/js/moss_image_prompt_builder.js, and web/js/utility.js.
+The editor's original interface and interactions are retained. Adaptations connect
+it to this node, isolate extension/template namespaces, retain missing metadata,
+normalize imported drafts, preserve canvas dimensions, and restore named widgets.
+The combined distribution is provided under GPL-3.0-only. Original Apache-2.0
+components retain their notices and license; both license texts are in LICENSE.
+Content-type prompt rules are independently implemented, informed by the MOSS
+skill and the user's illustration brief. No MangaLayout code is copied.

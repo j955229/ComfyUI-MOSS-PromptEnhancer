@@ -111,7 +111,7 @@ class OpenAICompatibleClient:
             raise RuntimeError(f"API 返回错误：{json.dumps(data['error'], ensure_ascii=False)}")
         return data
 
-    def chat(self, messages, schema, seed, max_tokens, temperature):
+    def chat(self, messages, schema, seed, max_tokens, temperature, sampling=None):
         payload = {
             "model": self.model,
             "messages": messages,
@@ -119,6 +119,9 @@ class OpenAICompatibleClient:
             "temperature": temperature,
             self.max_tokens_field: max_tokens,
         }
+        if sampling:
+            payload["top_p"] = sampling.get("top_p", 0.95)
+            payload["presence_penalty"] = sampling.get("presence_penalty", 0.0)
         if self.send_seed:
             payload["seed"] = seed % 2147483647
         if self.json_mode:
