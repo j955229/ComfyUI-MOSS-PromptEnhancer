@@ -266,7 +266,7 @@ def validate_response(raw, mode, width, height, language=None,
             characters = [item for item in items if isinstance(item, dict) and item.get("label") == "character"]
             if len(characters) != 1:
                 raise ValueError(
-                    "f"Single-character {content_type} needs exactly one character item; got {len(characters)}. "
+                    f"Single-character {content_type} needs exactly one character item; got {len(characters)}. "
                     "Keep one visible person instance. Use object items for that same person's clothing/accessories/props. "
                     "Remove repeated views, duplicate people and close-up character insets; preserve useful detail boxes as objects attached to the sole person."
                 )
