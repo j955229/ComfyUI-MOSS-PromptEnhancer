@@ -48,7 +48,7 @@ LAYOUT_SCHEMA = {
     "additionalProperties": False,
 }
 
-def output_schema(mode, canvas="none", width=None, height=None):
+def output_schema(mode, width=None, height=None):
     if mode == "caption":
         return CAPTION_SCHEMA
     layout = deepcopy(LAYOUT_SCHEMA)
@@ -67,14 +67,12 @@ def output_schema(mode, canvas="none", width=None, height=None):
                 "type": "array", "prefixItems": deepcopy(bounds), "minItems": 4, "maxItems": 4,
                 "description": f"Global xyxy pixels on ONE {width}x{height} page. All panels share these bounds.",
             }
-    if canvas in ("single", "multi_panel", "collage"):
-        layout["properties"]["summary"]["properties"]["canvas"] = {"const": canvas}
-    if mode == "layout" or (mode == "auto" and canvas in ("multi_panel", "collage")):
+    if mode == "layout":
         return layout
     return {"oneOf": [CAPTION_SCHEMA, layout]}
 
 def build_messages(request, mode, language, width, height, previous_prompt="", image_url="",
-                   task="auto", content_type="auto", character_mode="auto", has_image=False, canvas="none"):
+                   task="auto", content_type="auto", character_mode="auto", has_image=False):
     has_image = has_image or bool(image_url)
     actual_task = ("prompt_reverse" if has_image else "prompt_enhance") if task == "auto" else task
     system = instructions(content_type, character_mode, actual_task)
@@ -94,19 +92,20 @@ def build_messages(request, mode, language, width, height, previous_prompt="", i
             "Choose panel sizes/positions freely within the page; no fixed grid is imposed. "
             "For a new panel choose a region inside the page, never a coordinate origin outside it."
         )
-    if canvas in ("single", "multi_panel", "collage"):
+    system += (
+        "\nCANVAS IS RESULT METADATA, NOT A USER PRESET: Choose summary.canvas from the actual completed composition. "
+        "A continuous scene is single even with many character/object/text placement boxes. "
+        "Use multi_panel only for distinct visual/narrative panels, collage only for an actual montage of visual pieces. "
+        "A comic normally uses multi_panel, but an explicitly requested single splash image is single. "
+        "An illustration/poster/cover normally uses a continuous composition; honor explicitly requested panel or collage designs. "
+        "Content purpose, number of distinct characters, number of visible appearances and number of placement boxes are separate concepts. "
+        "Never turn clothing/accessory detail boxes into new panels, isolated portraits or duplicate figures. "
+        "Preserve a previous draft's composition unless the current request asks to change it; update canvas only when the actual structure changes."
+    )
+    if character_mode == "single" and content_type in ("illustration", "poster", "cover"):
         system += (
-            f"\nThe user explicitly selected canvas={canvas}. Plan the image accordingly. "
-            f"In every Layout result summary.canvas MUST equal {canvas}; do not change it to another type."
-        )
-        if mode == "auto" and canvas in ("multi_panel", "collage"):
-            system += " Auto output must use a Layout draft for this explicit canvas type."
-    else:
-        system += "\nCanvas selection is automatic (none). Infer one valid output canvas type; never emit none."
-    if character_mode == "single" and content_type == "illustration":
-        system += (
-            "\nSINGLE-PERSON ILLUSTRATION CONTRACT: Exactly ONE visible person instance in ONE continuous scene. "
-            "Do not add extra views, close-up insets, storyboard panels, duplicated faces, repeated bodies or a character sheet. "
+            "\nSINGLE-PERSON NON-COMIC CONTRACT: Exactly ONE visible person instance, normally in one continuous scene. "
+            "Do not add extra character views, close-up portrait insets, duplicated faces, repeated bodies or a character sheet. "
             "For Layout create exactly ONE character item for the whole visible person. "
             "Use separate OBJECT items to locate that SAME person's clothing, jewelry, holster, weapon and other attached details when useful. "
             "Each detail caption must explicitly bind it to the same person and the same instant; do not describe an isolated duplicate garment/person. "
@@ -202,7 +201,7 @@ def validate_description_language(draft, language):
                 "preserve actual visible text fields verbatim."
             )
 
-def validate_response(raw, mode, width, height, canvas="none", language=None,
+def validate_response(raw, mode, width, height, language=None,
                       character_mode="auto", content_type="auto"):
     cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
     if "</think>" in cleaned:
@@ -216,7 +215,7 @@ def validate_response(raw, mode, width, height, canvas="none", language=None,
     is_caption = "caption" in draft
     if mode == "caption" and not is_caption:
         raise ValueError("Caption mode requires exactly a caption object")
-    if (mode == "layout" or (mode == "auto" and canvas in ("multi_panel", "collage"))) and is_caption:
+    if mode == "layout" and is_caption:
         raise ValueError("Layout mode requires a layout object")
     if not is_caption:
         if (draft.get("width"), draft.get("height")) != (width, height):
@@ -262,15 +261,13 @@ def validate_response(raw, mode, width, height, canvas="none", language=None,
             if len(normalized_meta) != len(set(normalized_meta)):
                 raise ValueError("summary.meta tags must not repeat")
         if summary.get("canvas") not in ("single", "multi_panel", "collage"):
-            raise ValueError(f"summary.canvas is {summary.get('canvas')!r}; expected single, multi_panel or collage (none is only the UI auto setting)")
-        if canvas in ("single", "multi_panel", "collage") and summary["canvas"] != canvas:
-            raise ValueError(f"User selected canvas={canvas}, but the model returned {summary['canvas']!r}. Preserve the user's canvas selection.")
-        if character_mode == "single" and content_type == "illustration" and isinstance(items, list):
+            raise ValueError(f"summary.canvas is {summary.get('canvas')!r}; expected single, multi_panel or collage matching the actual composition")
+        if character_mode == "single" and content_type in ("illustration", "poster", "cover") and isinstance(items, list):
             characters = [item for item in items if isinstance(item, dict) and item.get("label") == "character"]
             if len(characters) != 1:
                 raise ValueError(
-                    f"Single-character illustration needs exactly one character item; got {len(characters)}. "
-                    "Keep one visible person in one continuous scene. Use object items for that same person's clothing/accessories/props. "
+                    "f"Single-character {content_type} needs exactly one character item; got {len(characters)}. "
+                    "Keep one visible person instance. Use object items for that same person's clothing/accessories/props. "
                     "Remove repeated views, duplicate people and close-up character insets; preserve useful detail boxes as objects attached to the sole person."
                 )
     validate_description_language(draft, language)

@@ -14,7 +14,7 @@ const ORDER = [
   "content_type", "character_mode", "request", "previous_prompt", "task", "output_mode", "language",
   "width", "height", "sampling_mode", "seed", "control_after_generate", "max_tokens", "temperature",
   "top_k", "top_p", "min_p", "repetition_penalty", "presence_penalty",
-  "prompt", "meta", "canvas", "import_mode", "show_advanced",
+  "prompt", "meta", "import_mode", "show_advanced",
   "timeout_seconds", "thinking", "mtp", "api_json_mode", "api_max_tokens_field", "api_send_seed",
 ];
 const LOCAL = new Set(["model_name", "context_size", "device", "llama_server_path", "mmproj_name"]);
@@ -24,8 +24,8 @@ const ADVANCED = new Set(["llama_server_path", "timeout_seconds", "api_key_env",
   "api_max_tokens_field", "api_send_seed", "thinking", "mtp", "repetition_penalty", "presence_penalty"]);
 const SAMPLING = new Set(["temperature", "seed", "control_after_generate", "top_k", "top_p", "min_p",
   "repetition_penalty", "presence_penalty"]);
-// Keep the global caption as internal editor state, without the redundant node textarea.
-const HIDDEN = new Set(["prompt", "resolved_canvas", "elements_data", "style_palette_data", "bg_brightness", "output_format"]);
+// Keep editor state internal; canvas is a deprecated compatibility widget only.
+const HIDDEN = new Set(["prompt", "canvas", "resolved_canvas", "elements_data", "style_palette_data", "bg_brightness", "output_format"]);
 
 function visible(widget, show) {
   if (!widget._mossOriginal) widget._mossOriginal = {
@@ -41,25 +41,10 @@ function visible(widget, show) {
   if (widget.inputEl) widget.inputEl.style.display = show ? "" : "none";
 }
 
-function sceneNotice(message) {
-  const toast = app.extensionManager?.toast;
-  if (typeof toast?.add === "function") {
-    toast.add({ severity: "info", summary: "MOSS Prompt Enhancer", detail: message, life: 12000 });
-  } else window.alert("MOSS Prompt Enhancer\n\n" + message);
-}
-
-function reconcileSingleIllustration(node) {
-  const find = (name) => node.widgets?.find((w) => w.name === name);
-  const canvas = find("canvas");
-  if (find("content_type")?.value === "illustration" &&
-      find("character_mode")?.value === "single" && canvas?.value === "multi_panel") {
-    canvas.value = "single";
-    sceneNotice("單人物插畫已使用 single 畫布。多個衣服／配件定位框由 Layout 提供；multi_panel 代表多分格，會引導模型安排不同鏡頭。");
-  }
-}
-
 function refresh(node) {
-  reconcileSingleIllustration(node);
+  // Old workflows may contain a canvas choice. It no longer controls generation.
+  const legacyCanvas = node.widgets?.find((w) => w.name === "canvas");
+  if (legacyCanvas) legacyCanvas.value = "none";
   const get = (name) => node.widgets?.find((w) => w.name === name)?.value;
   const backend = get("backend") || "local", advanced = !!get("show_advanced");
   const sample = get("sampling_mode") !== "off";
@@ -79,7 +64,10 @@ function refresh(node) {
     visible(widget, show);
   }
   // Preserve slot identity and existing connections across backend switches.
-  for (const input of node.inputs || []) if (input.name === "clip") input.hidden = backend !== "clip";
+  for (const input of node.inputs || []) {
+    if (input.name === "clip") input.hidden = backend !== "clip";
+    if (input.name === "canvas") input.hidden = true;
+  }
   node.setDirtyCanvas?.(true, true);
 }
 
@@ -99,7 +87,7 @@ app.registerExtension({
       const rank = new Map(ORDER.map((name, i) => [name, i]));
       this.widgets?.sort((a, b) => (rank.get(a.name) ?? 1000) - (rank.get(b.name) ?? 1000));
       for (const widget of this.widgets || []) {
-        if (["backend", "show_advanced", "sampling_mode", "api_send_seed", "content_type", "character_mode", "canvas"].includes(widget.name)) {
+        if (["backend", "show_advanced", "sampling_mode", "api_send_seed"].includes(widget.name)) {
           const callback = widget.callback;
           widget.callback = function () {
             const result = callback?.apply(this, arguments);
@@ -149,18 +137,23 @@ app.registerExtension({
       for (const widget of this.widgets || []) {
         if (Object.hasOwn(restored, widget.name)) widget.value = restored[widget.name];
       }
+      // Preserve an old layout's known structure, without carrying its selector
+      // into future generation. Current workflows store actual metadata separately.
+      if (data?.moss?.version !== 2 && !["single", "multi_panel", "collage"].includes(restored.resolved_canvas)) {
+        const hasContent = data?.ideo?.boxes?.length || String(restored.prompt || "").trim() ||
+          (String(restored.elements_data || "").trim().startsWith("[") &&
+           String(restored.elements_data || "").trim() !== "[]");
+        if (hasContent && ["single", "multi_panel", "collage"].includes(restored.canvas)) {
+          const resolved = this.widgets?.find((w) => w.name === "resolved_canvas");
+          if (resolved) resolved.value = restored.canvas;
+        }
+      }
       configure?.apply(this, arguments);
       refresh(this);
     };
     const executed = proto.onExecuted;
     proto.onExecuted = function (message) {
       const result = executed?.apply(this, arguments);
-      const selection = message?.canvas_selection?.[0];
-      if (["none", "single", "multi_panel", "collage"].includes(selection)) {
-        const widget = this.widgets?.find((w) => w.name === "canvas");
-        if (widget) widget.value = selection;
-      }
-      if (message?.moss_notice?.[0]) sceneNotice(message.moss_notice[0]);
       const resolved = message?.resolved_canvas?.[0];
       if (["single", "multi_panel", "collage"].includes(resolved)) {
         const widget = this.widgets?.find((w) => w.name === "resolved_canvas");
@@ -172,7 +165,7 @@ app.registerExtension({
     proto.onSerialize = function (data) {
       serialize?.apply(this, arguments);
       data.moss = {
-        version: 1,
+        version: 2,
         values: Object.fromEntries((this.widgets || []).filter((w) => names.has(w.name))
           .map((w) => [w.name, w.value])),
       };

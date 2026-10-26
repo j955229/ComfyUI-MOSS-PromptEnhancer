@@ -52,7 +52,7 @@ registerPromptBuilder({
   compactTip: "Compact output (what the model is given). Uncheck for pretty/indented.",
   tokenCap: 0,
   typeToggle: ["object", "character", "text"],
-  captionWidgets: ["prompt", "meta", "canvas", "resolved_canvas"],
+  captionWidgets: ["prompt", "meta", "resolved_canvas"],
   fields: [
     { key: "text", placeholder: "text to render (verbatim)", when: (b) => b.type === "text" },
     { key: "desc", placeholder: "caption: what this box looks like" },
@@ -101,12 +101,11 @@ registerPromptBuilder({
     });
     // Always the layout object, so templates/Copy keep the summary fields even without boxes
     // (the node itself outputs the plain prompt while there are no boxes).
-    const meta = strs(getW("meta")), canvas = getW("canvas"), pal = strs(node._stylePalette);
+    const meta = strs(getW("meta")), canvas = getW("resolved_canvas"), pal = strs(node._stylePalette);
     const summary = {};
     summary.meta = meta;
-    summary.canvas = CANVASES.includes(canvas) ? canvas
-      : (CANVASES.includes(getW("resolved_canvas")) ? getW("resolved_canvas")
-        : (getW("content_type") === "comic" ? "multi_panel" : "single"));
+    // Preserve the actual imported/generated structure; template switches do not rewrite it.
+    summary.canvas = CANVASES.includes(canvas) ? canvas : "single";
     summary.caption = prompt.trim();
     if (pal.length) summary.palette = pal;
     return { summary, items, bbox_coord_space: "abs_centralized", bbox_format: "yxyx" };
@@ -148,7 +147,7 @@ registerPromptBuilder({
     const s = (cap.summary && typeof cap.summary === "object") ? cap.summary : {};
     ed.setW("prompt", s.caption || "");
     if (Object.hasOwn(s, "meta")) ed.setW("meta", strs(s.meta).join(", "));
-    // Applying a result updates the resolved type, never the user's canvas selector.
+    // Keep actual result metadata for subsequent manual edits and export.
     if (CANVASES.includes(s.canvas)) ed.setW("resolved_canvas", s.canvas);
     if (Object.hasOwn(s, "palette")) ed.node._stylePalette = strs(s.palette);
   },
