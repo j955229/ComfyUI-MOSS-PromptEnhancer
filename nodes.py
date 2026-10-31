@@ -8,7 +8,7 @@ from pathlib import Path
 import folder_paths
 import comfy.model_management as mm
 
-from .media import prepare_image
+from .media import prepare_image, collect_images, image_input_index
 from .prompting import build_messages, output_schema, validate_response
 from .prompt_templates import CONTENT_TYPES, CHARACTER_MODES
 from .editor import (editor_draft, editor_payload, parse_import, data_list, metadata)
@@ -77,6 +77,23 @@ def resolve_projector(name, model):
     return preferred.resolve()
 
 
+class ImageInputs(dict):
+    """Declare numbered IMAGE sockets added by the frontend, without a fixed limit."""
+
+    def __contains__(self, name):
+        return super().__contains__(name) or image_input_index(name) is not None
+
+    def __getitem__(self, name):
+        if super().__contains__(name):
+            return super().__getitem__(name)
+        if image_input_index(name) is not None:
+            return ("IMAGE", {"lazy": True})
+        raise KeyError(name)
+
+    def get(self, name, default=None):
+        return self[name] if name in self else default
+
+
 class MOSSPromptEnhancerLocal:
     CATEGORY = "MOSS-Image/Prompt"
     FUNCTION = "generate"
@@ -108,7 +125,7 @@ class MOSSPromptEnhancerLocal:
             "llama_server_path": ("STRING", {"default": "", "tooltip": "仅本地后端：留空自动复用 Qwen H3 节点 runtime；或填写 llama-server.exe 路径。"}),
             "mmproj_name": (projectors, {"default": "auto", "tooltip": "仅本地图片模式：视觉投影。auto 会优先选择所选模型同目录下的 mmproj-F16.gguf。"}),
             "task": (list(TASK_OPTIONS), {"default": "auto", "tooltip": "prompt_reverse：提示词反推；prompt_enhance：文字扩写/修改；auto：有图片时反推，否则扩写。"}),
-            "image": ("IMAGE", {"tooltip": "可选：连接 Load Image 等图片节点。图片模式要求本地视觉模型或 API 视觉模型。"}),
+            "image": ("IMAGE", {"lazy": True, "tooltip": "image1：连接后自动增加 image2、image3…，可在 request 按名称指定参考用途。每个入口取图片批次的第一张；需要支持视觉的模型。"}),
             "backend": (["local", "api", "clip"], {"default": "local", "tooltip": "local：GGUF；api：兼容 API；clip：ComfyUI 文字生成模型（可选视觉）。"}),
             "api_base_url": ("STRING", {"default": "https://api.openai.com/v1", "tooltip": "仅 API 后端：基础地址，通常以 /v1 结尾；也可填写完整的 /chat/completions 地址。"}),
             "api_model": ("STRING", {"default": "", "tooltip": "仅 API 后端：模型 ID，例如 deepseek-chat、gpt-4.1-mini 或服务商控制台中的模型名。"}),
@@ -146,6 +163,7 @@ class MOSSPromptEnhancerLocal:
             "resolved_canvas": ("STRING", {"default": "", "tooltip": "内部保存生成或导入数据中的实际画面结构；不作为下一次生成的选择条件。"}),
             "show_advanced": ("BOOLEAN", {"default": False}),
         })
+        inputs["optional"] = ImageInputs(inputs["optional"])
         return inputs
 
 
@@ -167,9 +185,11 @@ class MOSSPromptEnhancerLocal:
             return ["import_json"]
         if kwargs.get("import_json", "").strip():
             return []
+        pending = [name for name, value in kwargs.items()
+                   if image_input_index(name) is not None and value is None]
         if kwargs.get("backend", "local") == "clip" and "clip" in kwargs and kwargs["clip"] is None:
-            return ["clip"]
-        return []
+            pending.append("clip")
+        return pending
 
     def generate(self, *args, **kwargs):
         try:
@@ -195,7 +215,7 @@ class MOSSPromptEnhancerLocal:
                  top_k=64, top_p=0.95, min_p=0.05, repetition_penalty=1.05, presence_penalty=0.0,
                  thinking=False, mtp="auto", prompt="", meta="", canvas="none", import_json="",
                  import_mode="when empty", elements_data="", style_palette_data="",
-                 bg_brightness=25, output_format="compact", show_advanced=False, resolved_canvas=""):
+                 bg_brightness=25, output_format="compact", show_advanced=False, resolved_canvas="", **image_inputs):
         # Ignore the deprecated canvas input, including values in old API workflows.
         # Generated/imported summary.canvas describes the actual composition.
         if import_mode not in ("when empty", "always"):
@@ -221,7 +241,8 @@ class MOSSPromptEnhancerLocal:
             raise ValueError("Invalid content_type or character_mode")
         if sampling_mode not in ("on", "off"):
             raise ValueError("Invalid sampling_mode")
-        has_image = image is not None
+        images = collect_images(image, image_inputs)
+        has_image = bool(images)
         actual_task = ("prompt_reverse" if has_image else "prompt_enhance") if task == "auto" else task
         if actual_task == "prompt_reverse" and not has_image:
             raise ValueError("prompt_reverse 需要连接 image 图片输入。")
@@ -232,10 +253,16 @@ class MOSSPromptEnhancerLocal:
         if max_tokens <= 0:
             raise ValueError("max_tokens 必须大于 0。")
         effective_request = "" if actual_task == "prompt_reverse" and request.strip() == DEFAULT_REQUEST else request
-        image_payload = prepare_image(image) if has_image and backend != "clip" else None
+        references = []
+        for reference in images:
+            mm.throw_exception_if_processing_interrupted()
+            entry = {key: value for key, value in reference.items() if key != "tensor"}
+            if backend != "clip":
+                entry["data_url"] = prepare_image(reference["tensor"])["data_url"]
+            references.append(entry)
         messages = build_messages(
             effective_request, output_mode, language, width, height, previous_prompt,
-            image_url=image_payload["data_url"] if image_payload else "",
+            images=references,
             task=actual_task, content_type=content_type, character_mode=character_mode, has_image=has_image,
         )
         # import_mode=always makes the new source authoritative, like KJ.
@@ -250,8 +277,8 @@ class MOSSPromptEnhancerLocal:
             "seed": seed, "sampling_mode": sampling_mode, "language": language,
         }
         if has_image:
-            info["image"] = {"width": int(image.shape[2]), "height": int(image.shape[1]),
-                             "batch": int(image.shape[0]), "frame_index": 0}
+            info["images"] = [{key: value for key, value in ref.items() if key != "data_url"}
+                              for ref in references]
         run = dict(messages=messages, output_mode=output_mode, width=width, height=height,
                    seed=seed, max_tokens=max_tokens, temperature=temperature if sampling["do_sample"] else 0.0,
                    sampling=sampling, fallback=fallback,
@@ -266,7 +293,8 @@ class MOSSPromptEnhancerLocal:
             return self._infer(client.chat, **run)
         if backend == "clip":
             from .clip_backend import ClipClient
-            client = ClipClient(clip, image[:1] if has_image else None, thinking, mtp)
+            client = ClipClient(clip, thinking=thinking, mtp=mtp,
+                                images=[reference["tensor"] for reference in images])
             info["model"] = client.model_name
             return self._infer(client.chat, **run)
         if device not in ("auto", "cpu"):

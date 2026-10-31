@@ -72,8 +72,11 @@ def output_schema(mode, width=None, height=None):
     return {"oneOf": [CAPTION_SCHEMA, layout]}
 
 def build_messages(request, mode, language, width, height, previous_prompt="", image_url="",
-                   task="auto", content_type="auto", character_mode="auto", has_image=False):
-    has_image = has_image or bool(image_url)
+                   task="auto", content_type="auto", character_mode="auto", has_image=False, images=None):
+    references = list(images or [])
+    if image_url and not references:
+        references = [{"name": "image1", "data_url": image_url}]
+    has_image = has_image or bool(references)
     actual_task = ("prompt_reverse" if has_image else "prompt_enhance") if task == "auto" else task
     system = instructions(content_type, character_mode, actual_task)
     system += (f"\nNODE PARAMETERS: output_mode={mode}; descriptive language={language}; "
@@ -127,7 +130,21 @@ def build_messages(request, mode, language, width, height, previous_prompt="", i
             "\nREQUIRED OUTPUT LANGUAGE: Write all descriptive captions in English, even when the brief is Chinese. "
             "Keep JSON keys/enums unchanged. Preserve actual visible text verbatim in its original language."
         )
+    if references:
+        names = [reference["name"] for reference in references]
+        system += (
+            "\nREFERENCE IMAGES: The attached images are separate references in this exact order: "
+            + ", ".join(names) + ". "
+            "Resolve each imageN mentioned in the request to that named attachment only. "
+            "These are reference identifiers, not text to print on the image. "
+            "Follow the user's assigned role for each reference (identity, outfit, style, setting or composition). "
+            "Do not exchange their roles, merge identities, or assume separate references form one observed scene. "
+            "Multiple references do not require extra people, repeated figures, a collage or extra panels. "
+            "For reverse prompting account for each reference distinctly while following the request."
+        )
     user = {"request": request.strip(), "task": actual_task}
+    if references:
+        user["reference_images"] = [reference["name"] for reference in references]
     if actual_task == "prompt_reverse" and not user["request"]:
         user["request"] = "Describe all applicable visible details faithfully for a reusable image prompt."
     if previous_prompt.strip():
@@ -141,9 +158,13 @@ def build_messages(request, mode, language, width, height, previous_prompt="", i
             previous = import_draft(previous, width, height, {}, content_type)
         user["previous_prompt"] = previous
     content = json.dumps(user, ensure_ascii=False)
-    if image_url:
-        content = [{"type": "text", "text": content},
-                   {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}}]
+    attachments = [reference for reference in references if reference.get("data_url")]
+    if attachments:
+        content = [{"type": "text", "text": content}]
+        for reference in attachments:
+            content.append({"type": "text", "text": reference["name"] + ":"})
+            content.append({"type": "image_url",
+                            "image_url": {"url": reference["data_url"], "detail": "auto"}})
     return [{"role": "system", "content": system}, {"role": "user", "content": content}]
 
 def layout_geometry_issues(draft, width, height):

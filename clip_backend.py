@@ -1,21 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
-"""ComfyUI's native text-generation path, limited to text and one image."""
+"""ComfyUI native text generation with ordered reference images."""
 import inspect
 import json
 
 import comfy.model_management as mm
 
-def has_image_tokens(value):
+from .media import clip_image_batch
+
+def image_token_count(value):
     if isinstance(value, dict):
         if value.get("type") == "image":
-            return True
-        return any(has_image_tokens(v) for v in value.values())
+            return 1
+        return sum(image_token_count(v) for v in value.values())
     if isinstance(value, (tuple, list)):
-        return any(has_image_tokens(v) for v in value)
-    return False
+        return sum(image_token_count(v) for v in value)
+    return 0
+
+
+def has_image_tokens(value):
+    return image_token_count(value) > 0
+
 
 class ClipClient:
-    def __init__(self, clip, image=None, thinking=False, mtp="auto"):
+    def __init__(self, clip, image=None, thinking=False, mtp="auto", images=None):
         if clip is None:
             raise ValueError("backend=clip 需要连接 clip 输入。")
         if not all(callable(getattr(clip, name, None)) for name in ("tokenize", "generate", "decode")):
@@ -23,7 +30,9 @@ class ClipClient:
         model = getattr(clip, "cond_stage_model", None)
         if model is None or not callable(getattr(model, "generate", None)):
             raise ValueError("连接的是文字编码器，不是支持 generate 的文字生成模型。")
-        self.clip, self.image, self.thinking = clip, image, bool(thinking)
+        references = list(images) if images is not None else ([] if image is None else [image])
+        self.image_count = sum(int(value.shape[0]) for value in references)
+        self.clip, self.image, self.thinking = clip, clip_image_batch(references), bool(thinking)
         self.mtp = {"off": False, "auto": True}.get(mtp, mtp)
         self.model_name = type(model).__name__
 
@@ -41,8 +50,12 @@ class ClipClient:
                                         thinking=self.thinking, system_prompt=system)
         except (TypeError, NotImplementedError, AttributeError) as exc:
             raise ValueError(f"此 CLIP 无法构造文字/图片对话：{exc}") from exc
-        if self.image is not None and not has_image_tokens(tokens):
-            raise ValueError("此 CLIP 的分词结果没有视觉输入，图片已被模型忽略；请改用支持视觉的文字生成模型。")
+        accepted = image_token_count(tokens)
+        if accepted < self.image_count:
+            raise ValueError(
+                f"此 CLIP 需要接收 {self.image_count} 张图片，但分词结果只含 {accepted} 个视觉输入。"
+                "为避免漏图，已停止生成；请使用支持多图的视觉文字生成模型。"
+            )
         options = {
             "do_sample": sampling.get("do_sample", True), "max_length": max_tokens,
             "temperature": temperature, "top_k": sampling.get("top_k", 64),

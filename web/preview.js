@@ -41,6 +41,70 @@ function visible(widget, show) {
   if (widget.inputEl) widget.inputEl.style.display = show ? "" : "none";
 }
 
+function imageIndex(input) {
+  if (input.name === "image") return 1;
+  const match = /^image([1-9][0-9]*)$/.exec(input.name);
+  return match ? Number(match[1]) : null;
+}
+
+function syncImageInputs(node) {
+  if (node._mossSyncingImages) return;
+  node._mossSyncingImages = true;
+  let changed = false;
+  try {
+    const slots = (node.inputs || []).filter((input) => imageIndex(input) != null);
+    // Retain one final empty socket; remove disconnected gaps before renumbering.
+    const last = slots[slots.length - 1];
+    const spare = last?.link == null ? last : null;
+    for (let i = (node.inputs?.length || 0) - 1; i >= 0; i--) {
+      const input = node.inputs[i];
+      if (imageIndex(input) != null && input.link == null && input !== spare) {
+        node.removeInput(i);
+        changed = true;
+      }
+    }
+    const remaining = (node.inputs || []).filter((input) => imageIndex(input) != null);
+    const tail = remaining[remaining.length - 1];
+    if (!tail || tail.link != null) {
+      const next = remaining.length ? Math.max(...remaining.map(imageIndex)) + 1 : 1;
+      node.addInput(next === 1 ? "image" : "image" + next, "IMAGE");
+      changed = true;
+    }
+    let index = 0;
+    for (const input of node.inputs || []) {
+      if (imageIndex(input) == null) continue;
+      index++;
+      const name = index === 1 ? "image" : "image" + index;
+      const label = "image" + index;
+      if (input.name !== name || input.label !== label) changed = true;
+      // Rename the existing slot so its link stays attached to the same source.
+      input.name = name;
+      input.label = label;
+    }
+    if (changed) {
+      node.setSize?.([node.size[0], node.computeSize()[1]]);
+      node.setDirtyCanvas?.(true, true);
+      node.graph?.change?.();
+    }
+  } finally {
+    node._mossSyncingImages = false;
+  }
+}
+
+function queueImageInputs(node) {
+  if (node._mossImageSyncQueued || node._mossSyncingImages) return;
+  node._mossImageSyncQueued = true;
+  const run = () => {
+    // Saved graph links must be restored before deciding which sockets are empty.
+    if (app.configuringGraph) { setTimeout(run, 50); return; }
+    node._mossImageSyncQueued = false;
+    if (!node.graph) return;
+    syncImageInputs(node);
+    refresh(node);
+  };
+  queueMicrotask(run);
+}
+
 function refresh(node) {
   // Old workflows may contain a canvas choice. It no longer controls generation.
   const legacyCanvas = node.widgets?.find((w) => w.name === "canvas");
@@ -48,7 +112,7 @@ function refresh(node) {
   const get = (name) => node.widgets?.find((w) => w.name === name)?.value;
   const backend = get("backend") || "local", advanced = !!get("show_advanced");
   const sample = get("sampling_mode") !== "off";
-  const hasImage = node.inputs?.some((i) => i.name === "image" && i.link != null);
+  const hasImage = node.inputs?.some((i) => imageIndex(i) != null && i.link != null);
   for (const widget of node.widgets || []) {
     let show = !HIDDEN.has(widget.name);
     if (LOCAL.has(widget.name)) show = backend === "local";
@@ -115,7 +179,10 @@ app.registerExtension({
           return callback?.apply(this, arguments);
         };
       }
+      const firstImage = this.inputs?.find((input) => input.name === "image");
+      if (firstImage) firstImage.label = "image1";
       refresh(this);
+      queueImageInputs(this);
     };
     const configure = proto.onConfigure;
     proto.onConfigure = function (data) {
@@ -150,6 +217,7 @@ app.registerExtension({
       }
       configure?.apply(this, arguments);
       refresh(this);
+      queueImageInputs(this);
     };
     const executed = proto.onExecuted;
     proto.onExecuted = function (message) {
@@ -171,9 +239,9 @@ app.registerExtension({
       };
     };
     const connections = proto.onConnectionsChange;
-    proto.onConnectionsChange = function () {
+    proto.onConnectionsChange = function (type) {
       const result = connections?.apply(this, arguments);
-      queueMicrotask(() => refresh(this));
+      if (type == null || type === 1) queueImageInputs(this);
       return result;
     };
   },
